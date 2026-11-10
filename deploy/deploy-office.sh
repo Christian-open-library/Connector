@@ -71,7 +71,13 @@ case "${1:-}" in
   links)
     python3 -I deploy/links.py server-json | "${SSH[@]}" "$HOST" links ;;
   members)
-    python3 -I deploy/members.py json | python3 -I deploy/funding.py attach | "${SSH[@]}" "$HOST" members ;;
+    # One run at a time, and no run longer than 10 minutes: sign-up is open, and members.py asks the
+    # sign-in service about every account. A run that is cut off sends nothing, so the server keeps its list.
+    mkdir -p "$HOME/.local/state"
+    exec 9>"$HOME/.local/state/library-members.lock"
+    flock -n 9 || { echo "members: another run is still going; skipped" >&2; exit 1; }
+    timeout --kill-after=30s 10m python3 -I deploy/members.py json | python3 -I deploy/funding.py attach \
+      | timeout --kill-after=30s 12m "${SSH[@]}" "$HOST" members ;;
   smoke)
     python3 -I deploy/smoke.py "$(url_file)" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("release",""))' "$DEPLOYED" 2>/dev/null || true)" ;;
   status|rollback)

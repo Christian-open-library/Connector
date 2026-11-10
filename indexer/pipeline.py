@@ -112,7 +112,11 @@ def head(repo: Path) -> str:
 def nightly(max_dollars: float):
     # Who may sign in: refreshed every night, even when the books didn't change. A failure here is
     # reported but doesn't stop the rebuild (yesterday's list stays on the server).
-    m = subprocess.run(['bash', str(ROOT / 'deploy/deploy-office.sh'), 'members'], capture_output=True, text=True)
+    try:
+        m = subprocess.run(['bash', str(ROOT / 'deploy/deploy-office.sh'), 'members'], capture_output=True, text=True,
+                           timeout=900)
+    except subprocess.TimeoutExpired:
+        m = subprocess.CompletedProcess([], 124, '', 'members push took longer than 15 minutes; stopped')
     print('members: ' + ((m.stdout or m.stderr).strip().splitlines() or ['no output'])[-1][:200])
     if m.returncode != 0 or m.stderr.strip():
         print('members push said:\n' + m.stderr.strip()[-2000:])

@@ -73,15 +73,15 @@ The two partly addressed items are inherent to a free, open service. Spending ca
 
 ## Not yet reviewed
 
-The coverage check named seven areas this review didn't reach. They're listed here so nobody reads silence as a pass:
+The coverage check named seven areas this review didn't reach. They're listed here so nobody reads silence as a pass. Two were dealt with directly afterwards, as noted:
 
-- **Member sync:** the hourly job that syncs the member and block lists makes one request per account, so many sign-ups could slow it.
+- **Member sync:** the hourly job that syncs the member and block lists makes one request per account, so many sign-ups could slow it. *Since fixed:* the job now stops after 10 minutes and never overlaps itself, and a run that is cut off leaves the server's list as it was.
 - **Stored book text at serve time:** the cost of preparing very unusual stored text for display. One case found here is already fixed.
 - **Re-running the server installer** as root over folders the deploy account owns.
 - **The installer bundle:** three small files in it come from the owner's other server rather than this repository.
 - **Withdrawn dictionaries:** whether entries from a withdrawn dictionary leave the index.
 - **Small builds:** how dictionary sources are chosen when a build has far fewer books than usual.
-- **Outside inputs to the build:** the Python packages it uses, and the dictionary and Bible source files that don't come through the books repository.
+- **Outside inputs to the build:** the Python packages it uses, and the dictionary and Bible source files that don't come through the books repository. *Since done:* the package versions are now recorded in `requirements.txt`, and an audit on 10 November 2026 found no known vulnerabilities in them. The source files are still unreviewed.
 
 ## The earlier review
 
