@@ -132,7 +132,8 @@ function test_a_covered_month_sends_its_gifts_to_the_coming_months(): void
     $svg = Support::card($l, 'dark');
     assert_contains('November is covered.</text>', $svg);
     assert_contains("Gifts support Matt Miller's work on the library.", $svg);
-    assert_contains('Covered by Matt Miller', $svg);
+    assert_contains('>Covered</text>', $svg);
+    assert_false(str_contains(explode('Free for everyone', $svg)[0], 'Matt Miller'), 'the name is not in the coverage line');
     assert_contains('Given this month', $svg);
     assert_contains('COMING UP', $svg);
     assert_contains('96%', $svg);

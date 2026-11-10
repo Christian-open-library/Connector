@@ -224,7 +224,7 @@ final class Support
         $out[] = self::line($x, $right, $y, 'Costs this month', self::money($l['costs']), 'total');
         $y += self::ROW;
         if ($covered) {
-            $out[] = self::line($x, $right, $y, 'Covered by ' . $l['covered_by'], self::money($l['costs']), 'given');
+            $out[] = self::line($x, $right, $y, 'Covered', self::money($l['costs']), 'given');
             $y += self::ROW;
         }
         if (!$covered || $l['given'] > 0) {
@@ -272,7 +272,7 @@ final class Support
         $h = $y + 26;
 
         $summary = "Keep it running, $month: costs " . self::money($l['costs'])
-            . ($covered ? ', covered by ' . $l['covered_by'] : ', given ' . self::money($l['given'])
+            . ($covered ? ', covered' : ', given ' . self::money($l['given'])
                 . ($l['carried'] > 0 ? ', carried ' . self::money($l['carried']) : '') . ", $status")
             . '. Coming up: ' . implode('; ', array_map(static fn (array $a): string => self::name($a['month'])
                 . ' about ' . self::money($a['costs']) . ', ' . $a['pct'] . '% funded', $l['ahead'])) . '.';
