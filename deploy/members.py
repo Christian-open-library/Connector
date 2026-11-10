@@ -4,6 +4,7 @@ Christian-open-library organization) and blocked accounts. Since 2026-11-10 anyo
 connector (oauth.php members_only false) except blocked accounts; the member list stays for later use.
 
     python3 -I deploy/members.py json           print {"members": [...], "blocked": [...]} (WorkOS user ids)
+    python3 -I deploy/members.py signups        print the account count and the change since the last day recorded
     python3 -I deploy/members.py list           who signed in: members, others, blocked
     python3 -I deploy/members.py block LOGIN    block a GitHub account or an email address (then: deploy/deploy-office.sh members)
     python3 -I deploy/members.py unblock LOGIN  (LOGIN: a GitHub login or an email address)
@@ -13,6 +14,7 @@ from the gh CLI (Matt's login). The office server only ever receives the list of
 deploy/deploy-office.sh members sends it; the nightly update does that every night.
 """
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -98,12 +100,50 @@ def compute():
     return allowed, others, banned
 
 
+SIGNUPS = CONF / 'signups.json'   # {"YYYY-MM-DD": total accounts that day}, last 60 days; counts only, no names
+
+
+def record_signups(total):
+    """Remember how many accounts exist today, so the nightly log can say how many are new."""
+    import datetime
+    try:
+        days = json.loads(SIGNUPS.read_text())
+    except (OSError, ValueError):
+        days = {}
+    days[datetime.date.today().isoformat()] = total
+    days = dict(sorted(days.items())[-60:])
+    tmp = SIGNUPS.with_suffix(f'.{os.getpid()}.tmp')
+    tmp.write_text(json.dumps(days, indent=1) + '\n')
+    tmp.chmod(0o600)
+    tmp.replace(SIGNUPS)
+
+
+def signup_line():
+    """"sign-ups: 12 accounts, +3 since 2026-11-10" for the nightly log ('' when there is no history)."""
+    try:
+        days = json.loads(SIGNUPS.read_text())
+    except (OSError, ValueError):
+        return ''
+    if not days:
+        return ''
+    today = max(days)
+    earlier = [d for d in days if d < today]
+    line = f'sign-ups: {days[today]} accounts'
+    if earlier:
+        base = max(earlier)
+        line += f', {days[today] - days[base]:+d} since {base}'
+    return line
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''
     if cmd == 'json':
-        allowed, _, banned = compute()
+        allowed, others, banned = compute()
+        record_signups(len(allowed) + len(others))
         print(json.dumps({'members': sorted(uid for uid, _, _ in allowed),
                           'blocked': sorted(uid for uid, _, _ in banned)}, indent=1))
+    elif cmd == 'signups':
+        print(signup_line() or 'no sign-up history yet')
     elif cmd == 'list':
         allowed, others, banned = compute()
         print(f'{len(allowed)} library members have signed in:')

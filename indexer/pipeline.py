@@ -120,6 +120,9 @@ def nightly(max_dollars: float):
     print('members: ' + ((m.stdout or m.stderr).strip().splitlines() or ['no output'])[-1][:200])
     if m.returncode != 0 or m.stderr.strip():
         print('members push said:\n' + m.stderr.strip()[-2000:])
+    su = subprocess.run(['python3', '-I', str(ROOT / 'deploy/members.py'), 'signups'], capture_output=True, text=True)
+    if su.returncode == 0 and su.stdout.strip():
+        print(su.stdout.strip().splitlines()[0][:200])
     # Build only reviewed main (THREAT-MODEL B4): the clone must be on main, tracking origin/main, with
     # nothing uncommitted or untracked, or nothing is built.
     def git(*a):
