@@ -1,0 +1,37 @@
+{
+ "authorization_endpoint": "https://progressive-canvas-22.authkit.app/oauth2/authorize",
+ "authorization_response_iss_parameter_supported": true,
+ "client_id_metadata_document_supported": true,
+ "code_challenge_methods_supported": [
+  "S256"
+ ],
+ "device_authorization_endpoint": "https://progressive-canvas-22.authkit.app/oauth2/device_authorization",
+ "grant_types_supported": [
+  "authorization_code",
+  "refresh_token",
+  "urn:ietf:params:oauth:grant-type:device_code",
+  "urn:ietf:params:oauth:grant-type:token-exchange"
+ ],
+ "introspection_endpoint": "https://progressive-canvas-22.authkit.app/oauth2/introspection",
+ "issuer": "https://progressive-canvas-22.authkit.app",
+ "jwks_uri": "https://progressive-canvas-22.authkit.app/oauth2/jwks",
+ "registration_endpoint": "https://progressive-canvas-22.authkit.app/oauth2/register",
+ "response_modes_supported": [
+  "query"
+ ],
+ "response_types_supported": [
+  "code"
+ ],
+ "scopes_supported": [
+  "email",
+  "offline_access",
+  "openid",
+  "profile"
+ ],
+ "token_endpoint": "https://progressive-canvas-22.authkit.app/oauth2/token",
+ "token_endpoint_auth_methods_supported": [
+  "none",
+  "client_secret_post",
+  "client_secret_basic"
+ ]
+}

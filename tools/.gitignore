@@ -1,0 +1,7 @@
+# Installed by setup.sh (re-create with: bash tools/setup.sh)
+node
+node-v*/
+node_modules/
+.download.*/
+# Runtime state of wp-local.sh (pid, logs, generated blueprint, WordPress cache)
+run/

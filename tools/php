@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# PHP 8.3 CLI for this project: "tools/php script.php args..." (same options as the php binary).
+# PHP runs as WebAssembly (WordPress Playground's php-wasm) inside Node.js. It sees only
+# ~/library-connector (read-write) and ~/library-work (read-only); see lib/php-cli.mjs.
+# Node's permission model is a second fence: Node itself may only read those two trees and write
+# the project, and may not start processes or threads. Native addons are allowed for one reason:
+# the fs-ext addon shipped with php-wasm gives SQLite real OS file locks, so a database shared
+# with another process (Python, the WordPress server) is locked correctly.
+set -euo pipefail
+
+TOOLS="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+PROJECT="$(dirname "$TOOLS")"
+WORK="$(dirname "$PROJECT")/library-work"
+
+if [ ! -x "$TOOLS/node/bin/node" ] || [ ! -d "$TOOLS/node_modules/@php-wasm/node-8-3" ]; then
+    echo "tools/php: not installed yet; run: bash $TOOLS/setup.sh" >&2
+    exit 127
+fi
+
+# PERM0001 is Node's notice that --allow-addons weakens the permission model (see above).
+exec "$TOOLS/node/bin/node" --import "$TOOLS/lib/node-preload.mjs" \
+    --permission --allow-addons --disable-warning=PERM0001 \
+    --allow-fs-read="$PROJECT" --allow-fs-read="$WORK" \
+    --allow-fs-write="$PROJECT" \
+    "$TOOLS/lib/php-cli.mjs" "$@"

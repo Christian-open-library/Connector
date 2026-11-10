@@ -1,0 +1,3 @@
+# Hits from indexer/injection.py that a person read and judged harmless.
+# work_key<TAB>pattern<TAB>where<TAB>position<TAB>why: the first four columns exactly as the scan prints them.
+# Each line allows that one place only. Keep this short: each line is a blind spot.

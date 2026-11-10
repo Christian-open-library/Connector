@@ -1,0 +1,56 @@
+#!/usr/bin/python3 -I
+"""library-check-build DIR BUILD_ID: refuse an uploaded build unless it is exactly what its manifest says.
+
+Only the manifest's files plus manifest.json may be there (no links, no subfolders); each file must match its
+size and sha256; meta.build_id must be BUILD_ID and embed_fake 0; library.sqlite must open read-only with FTS5.
+"""
+import hashlib
+import json
+import os
+import sqlite3
+import stat
+import sys
+
+
+def fail(msg):
+    sys.exit(f"library-check-build: {msg}")
+
+
+def main():
+    d, build_id = sys.argv[1], sys.argv[2]
+    with open(os.path.join(d, "manifest.json")) as f:
+        m = json.load(f)
+    files = m.get("files") or {}
+    if set(files) != {"library.sqlite", "vectors.bin", "ids.bin"}:
+        fail(f"unexpected file list {sorted(files)}")
+    present = set(os.listdir(d))
+    if present != set(files) | {"manifest.json"}:
+        fail(f"unexpected files: {sorted(present - set(files) - {'manifest.json'})}")
+    meta = m.get("meta") or {}
+    if meta.get("build_id") != build_id:
+        fail("build id differs from the manifest")
+    if str(meta.get("embed_fake")) != "0":
+        fail("test vectors refused")
+    for name, info in files.items():
+        p = os.path.join(d, name)
+        st = os.lstat(p)
+        if not stat.S_ISREG(st.st_mode):
+            fail(f"{name} is not a plain file")
+        if st.st_size != info["bytes"]:
+            fail(f"{name} size {st.st_size} != {info['bytes']}")
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        if h.hexdigest() != info["sha256"]:
+            fail(f"{name} sha256 differs")
+        print(f"ok    {name}: {st.st_size / 1e6:.1f} MB, sha256 matches")
+    db = sqlite3.connect(f"file:{os.path.join(d, 'library.sqlite')}?mode=ro", uri=True)
+    n = db.execute("SELECT count(*) FROM passages_fts WHERE passages_fts MATCH 'grace'").fetchone()[0]
+    if n < 1:
+        fail("keyword search finds nothing")
+    print(f"ok    SQLite {sqlite3.sqlite_version} opens it read-only; \"grace\" is in {n} passages")
+
+
+if __name__ == "__main__":
+    main()

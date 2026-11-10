@@ -1,0 +1,2 @@
+# library-connector: let tinyproxy read its domain allowlist (Ubuntu's profile allows only tinyproxy.conf).
+file r /etc/tinyproxy/filter,

@@ -1,0 +1,31 @@
+{
+  "_about": "Running costs shown on the public cost card (deploy/funding.py). Amounts in US cents. Searches and new books are metered, so they are not listed here.",
+  "start": "2026-11",
+  "monthly": [
+    {
+      "name": "Domain name",
+      "cents_per_year": 1044,
+      "_note": "christianopenlibrary.org at Cloudflare's at-cost price"
+    },
+    {
+      "name": "Electricity for the server (estimate)",
+      "cents": 250,
+      "_note": "about 22 W around the clock at about 14 cents per kWh"
+    }
+  ],
+  "one_time": [
+    {
+      "month": "2026-11",
+      "name": "Building the search index (one time)",
+      "cents": 1086,
+      "_note": "743.1M voyage-4-lite tokens, the first 200M free"
+    }
+  ],
+  "covered_by_curator": {
+    "name": "Matt Miller",
+    "months": [
+      "2026-11"
+    ],
+    "_note": "months Matt paid for himself"
+  }
+}

@@ -1,0 +1,7 @@
+.venv/
+data/
+*.key
+__pycache__/
+wip-xref/
+tools/sqlite-3.37.2/
+deploy/office/build/

@@ -1,0 +1,81 @@
+#!/bin/bash
+# library-deploy: what homebox may do on the office server, as libdeploy (through library-deploy-shell).
+#   activate-build ID      check incoming/builds/ID (sizes, sha256, SQLite), move it into place, switch to it
+#   activate-release REV   move incoming/releases/REV into place and switch the app to it
+#   rollback               switch back to the previous build
+#   links                  replace the personal-links list with the JSON on stdin
+#   members                replace the list of WorkOS users who may sign in (JSON on stdin)
+#   status                 print the current build and app release
+set -u
+umask 027
+cd / || exit 1
+BASE=/srv/library
+IN=$BASE/incoming
+LIVE=$BASE/live
+die() { echo "library-deploy: $*" >&2; exit 1; }
+name_ok() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; }
+swap() { ln -sfn "$2" "$1.new" && mv -T "$1.new" "$1"; }   # atomic symlink switch
+
+case "${1:-}" in
+  activate-build)
+    id=${2:-}; name_ok "$id" || die "bad build id"
+    src=$IN/builds/$id; dst=$BASE/builds/$id
+    [ -d "$src" ] && [ ! -L "$src" ] || die "no uploaded build $id"
+    [ ! -e "$dst" ] || die "build $id is already in place"
+    python3 -I /usr/local/sbin/library-check-build "$src" "$id" || die "build $id failed its checks"
+    chgrp -R libsrv "$src" && chmod 750 "$src" && chmod 640 "$src"/* || die "permissions"
+    mv -T "$src" "$dst" || die "move"
+    prev=$(readlink "$LIVE/current" 2>/dev/null || true)
+    swap "$LIVE/current" "../builds/$id" || die "switch"
+    [ -n "$prev" ] && [ "$prev" != "../builds/$id" ] && swap "$LIVE/previous" "$prev"
+    keep_prev=$(readlink "$LIVE/previous" 2>/dev/null || true)
+    for d in "$BASE"/builds/*; do
+      [ -d "$d" ] || continue
+      b=../builds/$(basename "$d")
+      [ "$b" = "../builds/$id" ] || [ "$b" = "$keep_prev" ] || rm -rf -- "$d"
+    done
+    echo "current -> builds/$id${keep_prev:+ (previous: ${keep_prev#../})}" ;;
+  activate-release)
+    rev=${2:-}; name_ok "$rev" || die "bad release name"
+    src=$IN/releases/$rev; dst=$BASE/releases/$rev
+    [ -d "$src" ] && [ ! -L "$src" ] || die "no uploaded release $rev"
+    [ -f "$src/www/index.php" ] && [ -d "$src/src" ] || die "release $rev is incomplete"
+    find "$src" -type l | grep -q . && die "release $rev contains links"
+    php8.5 -l "$src/www/index.php" >/dev/null && for f in "$src"/src/*.php; do php8.5 -l "$f" >/dev/null || die "syntax error in $f"; done
+    rm -rf -- "$dst"
+    # Others may pass through folders (o=X, for nginx's $realpath_root) but read no file.
+    chgrp -R libsrv "$src" && chmod -R u=rwX,g=rX,o=X "$src" || die "permissions"
+    mv -T "$src" "$dst" || die "move"
+    swap "$LIVE/app" "../releases/$rev" || die "switch"
+    ls -1dt "$BASE"/releases/* | tail -n +4 | while read -r old; do
+      [ "$(basename "$old")" = "$rev" ] || rm -rf -- "$old"
+    done
+    echo "app -> releases/$rev" ;;
+  rollback)
+    prev=$(readlink "$LIVE/previous" 2>/dev/null) || die "no previous build"
+    cur=$(readlink "$LIVE/current")
+    swap "$LIVE/current" "$prev" && swap "$LIVE/previous" "$cur"
+    echo "current -> ${prev#../} (previous: ${cur#../})" ;;
+  links)
+    tmp=$(mktemp "$BASE/links/.links.XXXXXX") || die "temp file"
+    head -c 2000001 > "$tmp"
+    [ "$(stat -c %s "$tmp")" -le 2000000 ] || { rm -f "$tmp"; die "links list too large"; }
+    python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d.get("links"), list)' "$tmp" \
+      || { rm -f "$tmp"; die "links list is not valid JSON"; }
+    chgrp libsrv "$tmp" && chmod 640 "$tmp" && mv -f "$tmp" "$BASE/links/links.json" || die "write"
+    echo "links: $(grep -c sha256 "$BASE/links/links.json") active" ;;
+  members)
+    tmp=$(mktemp "$BASE/links/.members.XXXXXX") || die "temp file"
+    head -c 2000001 > "$tmp"
+    [ "$(stat -c %s "$tmp")" -le 2000000 ] || { rm -f "$tmp"; die "member list too large"; }
+    python3 -I -c 'import json,re,sys; d=json.load(open(sys.argv[1])); m=d.get("members"); assert isinstance(m, list) and all(isinstance(x, str) and re.fullmatch(r"user_[A-Za-z0-9]{10,64}", x) for x in m)' "$tmp" \
+      || { rm -f "$tmp"; die "member list is not valid"; }
+    chgrp libsrv "$tmp" && chmod 640 "$tmp" && mv -f "$tmp" "$BASE/links/members.json" || die "write"
+    echo "members: $(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["members"]))' "$BASE/links/members.json")" ;;
+  status)
+    echo "current: $(readlink "$LIVE/current" 2>/dev/null || echo none)"
+    echo "previous: $(readlink "$LIVE/previous" 2>/dev/null || echo none)"
+    echo "app: $(readlink "$LIVE/app" 2>/dev/null || echo none)"
+    df -h --output=avail "$BASE" | tail -1 | sed 's/^ */free: /' ;;
+  *) die "unknown command" ;;
+esac

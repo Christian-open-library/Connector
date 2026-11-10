@@ -1,0 +1,12 @@
+{
+  "name": "col-library-local-php-tools",
+  "private": true,
+  "description": "Local PHP 8.3 (WebAssembly) and WordPress Playground for testing the plugin. Install with tools/setup.sh.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "dependencies": {
+    "@php-wasm/node": "3.1.62",
+    "@php-wasm/universal": "3.1.62",
+    "@wp-playground/cli": "3.1.62"
+  }
+}

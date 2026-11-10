@@ -1,0 +1,15 @@
+#!/bin/bash
+# Forced command for homebox's key on the libdeploy account (authorized_keys command=). homebox may only
+# upload into /srv/library/incoming (rrsync, write-only) and run library-deploy's few commands.
+set -u
+c=${SSH_ORIGINAL_COMMAND:-}
+case "$c" in
+  "rsync --server "*)
+    exec /usr/bin/rrsync -munge -no-del -wo /srv/library/incoming ;;   # no symlinks followed, nothing deleted
+  "activate-build "*|"activate-release "*|rollback|links|members|status)
+    read -r -a args <<< "$c"
+    exec /usr/local/sbin/library-deploy "${args[@]}" ;;
+  *)
+    echo "library-deploy-shell: not allowed" >&2
+    exit 1 ;;
+esac

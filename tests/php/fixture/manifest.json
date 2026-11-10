@@ -1,0 +1,38 @@
+{
+ "build_id": "fixture",
+ "meta": {
+  "build_id": "fixture",
+  "built_at": "2026-11-08T00:00:00+00:00",
+  "repo_commit": "",
+  "chunker_version": "1",
+  "n_works": "4",
+  "n_passages": "28",
+  "n_dropped_ocr": "1",
+  "embed_model": "voyage-4-lite",
+  "query_model": "voyage-4-lite",
+  "embed_dims": "8",
+  "embed_dtype": "int8",
+  "embed_scale": "154.74371337890625",
+  "ivf_k": "4",
+  "rerank_model": "rerank-3",
+  "embed_fake": "1",
+  "n_vectors": "27",
+  "bible_translations": "kjv,asv,drb,darby,webster,ylt,bsb",
+  "n_scripture_refs": "31",
+  "n_dictionary_entries": "861"
+ },
+ "files": {
+  "library.sqlite": {
+   "bytes": 1892352,
+   "sha256": "8920a27fcc07289c8b77c47d0cca73b125ad38a5b4cf7547aeacf0b7ad6f3cec"
+  },
+  "vectors.bin": {
+   "bytes": 216,
+   "sha256": "54b5e16be939a2e8ea9edb8c7f68e58f4289be45d516288d2dae5654e6751fd8"
+  },
+  "ids.bin": {
+   "bytes": 108,
+   "sha256": "09dc49f3ff7b0602e328aee761c6f7d0b9b445b5ac17107c43952721650cf251"
+  }
+ }
+}
