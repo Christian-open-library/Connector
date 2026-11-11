@@ -29,7 +29,7 @@ Each search result is marked as an exact, close, partial or loose match. When th
 
 - **`indexer/`** (Python) builds the search index from the books repository:
   - an SQLite FTS5 database for keyword search;
-  - [Voyage AI](https://www.voyageai.com) embeddings (voyage-4-lite, 512 dimensions, int8) with an IVF index for meaning search;
+  - [Voyage AI](https://www.voyageai.com) embeddings (books indexed with voyage-4-lite, 512 dimensions, int8; searches embedded with voyage-4-large, which shares its embedding space) with an IVF index for meaning search;
   - a Scripture citation index and the dictionaries.
 
   It runs nightly and embeds only passages that are new. Before a build goes live, a scanner refuses text that looks aimed at an AI.

@@ -85,6 +85,11 @@ def _texts(db):
             'page_first', 'page_last')
     for row in db.execute(f'SELECT key, {", ".join(cols)} FROM works'):
         yield row[0], 'metadata', 0, ' | '.join(str(x) for x in row[1:] if x)
+    try:
+        for name, dates, note in db.execute('SELECT name, dates, note FROM authors'):
+            yield f'author:{name}', 'note', 0, ' | '.join(x for x in (name, dates, note) if x)
+    except sqlite3.OperationalError:
+        pass   # a build made before author notes existed
 
 
 def scan(build_dir: Path, allowed: set | None = None):
