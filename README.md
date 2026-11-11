@@ -2,7 +2,7 @@
 
 The AI connector for the [Christian Open Library](https://github.com/Christian-open-library): about 4,700 public-domain works, mostly Christian (the Church Fathers, the Reformers, the Puritans, Spurgeon, Edwards, creeds and confessions, verse-by-verse commentaries and Greek and Hebrew study helps, sermons, the Princeton Review, poetry and fiction, and classic philosophy), seven Bibles and classic Bible dictionaries, searchable from AI apps such as Claude, ChatGPT and Gemini.
 
-It's a [Model Context Protocol](https://modelcontextprotocol.io) server. Your AI app asks it questions, and it answers with passages quoted word for word from the original books, with author, title, year and page, so you can check them.
+It's a [Model Context Protocol](https://modelcontextprotocol.io) server. Your AI app asks it questions, and it answers with passages quoted word for word from the library's copies of the books, with the author and title, and the year and page where the source gives them, so you can check them.
 
 **Use it:** add `https://mcp.christianopenlibrary.org/mcp` as a connector in your AI app and sign in with your email or GitHub. It's free. Step-by-step instructions are on the [library's front page](https://github.com/Christian-open-library).
 
@@ -23,6 +23,8 @@ Six read-only tools:
 
 Each result comes with the text around it, so the AI can quote an author's own position rather than an objection he goes on to answer. If a quotation appears word for word in the library, it ranks first.
 
+Each search result is marked as an exact, close, partial or loose match. When the library has nothing close to what was asked, or no such work, the result says NOT FOUND or NO CLOSE MATCH and tells the AI not to quote from memory. Passages from scanned books are marked as uncorrected OCR.
+
 ## How it works
 
 - **`indexer/`** (Python) builds the search index from the books repository:
@@ -38,9 +40,9 @@ Each result comes with the text around it, so the AI can quote an author's own p
 ## Sign-in, privacy and limits
 
 - **Sign-in:** the connector is an OAuth 2.1 resource server. [WorkOS AuthKit](https://workos.com) handles sign-in (a one-time code by email, or GitHub). The connector checks each token's signature and claims itself.
-- **No user data:** the connector stores no accounts, documents or conversations.
+- **No user data:** the connector keeps no copy of conversations or documents. Sign-in accounts are held by WorkOS, not by the connector.
 - **Logs:** they record the method, status and timing, with a pseudonymous id per person (part of a hash). Search text isn't logged unless debugging is turned on, and keys are always removed.
-- **Your questions:** to search by meaning, they are sent to Voyage AI.
+- **Your questions:** to search by meaning, the search words are sent to Voyage AI. The library's Voyage account is opted out of data use, so Voyage deletes them after processing. [What happens to your question](https://github.com/Christian-open-library/.github/blob/main/PRIVACY.md) lists everyone who sees it.
 - **Limits:** each person has a daily limit, and a daily cap keeps search spending in check. You can see what the connector costs to run each month on the [front page](https://github.com/Christian-open-library).
 
 ## Security

@@ -57,9 +57,16 @@ final class Format
         if ($r->hits !== []) {
             $top .= "\n" . self::CONTEXT_RULE;
         }
+        $matches = array_filter(array_column($r->hits, 'match'));
+        if ($matches !== []) {
+            $top .= "\n" . self::MATCH_RULE;
+            if (array_intersect($matches, ['exact', 'close']) === []) {
+                $top .= "\n" . (in_array('partial', $matches, true) ? self::NO_CLOSE_MATCH : self::NO_MATCH);
+            }
+        }
         $blocks = [];
         foreach ($r->hits as $i => $p) {
-            $head = self::passageHeader($p, $r->offset + $i + 1);
+            $head = self::passageHeader($p, $r->offset + $i + 1) . self::matchLabel($p['match'] ?? null);
             if (isset($p['context_before'])) {
                 $head .= "\n" . self::contextLine($p['context_before'], 'before');
             }
@@ -67,7 +74,8 @@ final class Format
             if (isset($p['context_after'])) {
                 $tail .= "\n" . self::contextLine($p['context_after'], 'after');
             }
-            $tail .= self::sourceLine($p['work']) . self::pageLinkLine($p['work'], $p['page_start'] ?? null);
+            $tail .= self::scanLine($p['work']) . self::sourceLine($p['work'])
+                . self::pageLinkLine($p['work'], $p['page_start'] ?? null);
             if ($p['also'] !== []) {
                 $also = [];
                 foreach ($p['also'] as $a) {
@@ -84,6 +92,26 @@ final class Format
     public const CONTEXT_RULE = 'Each result shows the text just before and after it ("Before"/"After"), or the '
         . 'whole neighbouring passage when the result opens with an objection, a question or an answer. Quote the '
         . 'author\'s own position, not an objection he answers; read_passage gives more context by ref.';
+
+    /** Shown above search results that carry a match strength. */
+    public const MATCH_RULE = 'Each result is marked with how well it matches: "exact words" (it holds the query '
+        . 'word for word), "close" (it is about what was asked), "partial" (related) or "loose" (only loosely '
+        . 'related; do not rely on it).';
+
+    /** Shown when no result is an exact or close match but some are partial. */
+    public const NO_CLOSE_MATCH = 'NO CLOSE MATCH: these passages are related to the query but may not answer it. '
+        . 'If they do not, tell the user the library may not have it; do not stretch a passage to fit.';
+
+    /** Shown when every result is only loosely related. */
+    public const NO_MATCH = 'NOT FOUND: nothing in the library matches this query; the passages below are only '
+        . 'loosely related. Tell the user the library does not appear to have it. ' . self::FROM_MEMORY_RULE;
+
+    /** What to do about something the library does not have. */
+    public const FROM_MEMORY_RULE = 'Do not quote or cite it from memory as though it came from the library.';
+
+    /** Shown with every passage of a work whose text is uncorrected OCR. */
+    public const SCAN_NOTE = 'Text: uncorrected OCR of a scanned book, so some letters and words are misread; '
+        . 'check the wording against the scan before quoting it.';
 
     /** Words of a neighbouring passage shown before or after a result (the whole passage for a Q&A pair). */
     public const CONTEXT_WORDS = 45;
@@ -150,12 +178,15 @@ final class Format
                 $text = "Only {$r->total} passage" . ($r->total === 1 ? ' contains' : 's contain')
                     . " the exact phrase \"$q\"; use an offset below {$r->total}.";
             } else {
-                $text = "No passage contains the exact phrase \"$q\". Old spellings are matched automatically; "
-                    . 'try fewer or different words, or search in mode "best".';
+                $text = "NOT FOUND: no passage in the library contains the exact phrase \"$q\". Old spellings are "
+                    . 'matched automatically; try fewer or different words, or search in mode "best". If it is still '
+                    . 'not found, the wording may differ, the work may not be in the library, or the quotation may be '
+                    . 'misattributed: say the library could not confirm it. ' . self::FROM_MEMORY_RULE;
             }
         } else {
-            $text = "No passages found for \"$q\". Try other words or a shorter query"
-                . (self::hasFilterNote($r->notes) ? ', or loosen the filters' : '') . '.';
+            $text = "NOT FOUND: no passages found for \"$q\". Try other words or a shorter query"
+                . (self::hasFilterNote($r->notes) ? ', or loosen the filters' : '') . '. If nothing is found, tell the '
+                . 'user the library does not appear to have it. ' . self::FROM_MEMORY_RULE;
         }
         return $text . self::notesFooter($r->notes);
     }
@@ -177,6 +208,7 @@ final class Format
         $where = array_filter([$work['source_url'] !== '' ? 'Copied from: ' . self::field($work['source_url'], 500) : '',
                                $work['license'] !== '' ? 'License: ' . self::field($work['license'], 200) : '']);
         $top .= $where !== [] ? "\n" . implode(' · ', $where) : '';
+        $top .= self::scanLine($work);
         $blocks = [];
         foreach ($passages as $p) {
             $head = 'P' . $p['id'];
@@ -197,10 +229,14 @@ final class Format
 
     // ---------------------------------------------------------------------------- find_works
 
-    /** @param list<array> $works  @param list<string> $notes */
-    public static function works(array $works, int $total, string $heading, array $notes = []): string
+    /**
+     * @param list<array> $works  @param list<string> $notes
+     * @param string $lead a line printed first (when no work matched every word of the query)
+     */
+    public static function works(array $works, int $total, string $heading, array $notes = [], string $lead = ''): string
     {
-        $top = 'Works 1-' . count($works) . ' of ' . number_format($total) . ($heading !== '' ? " $heading" : '');
+        $top = ($lead !== '' ? $lead . "\n\n" : '')
+            . 'Works 1-' . count($works) . ' of ' . number_format($total) . ($heading !== '' ? " $heading" : '');
         $blocks = [];
         foreach ($works as $i => $w) {
             $lines = [];
@@ -292,7 +328,8 @@ final class Format
         foreach ($r->hits as $i => $p) {
             $blocks[] = ['head' => self::passageHeader($p, $r->offset + $i + 1) . " · (cites {$p['cites']})"
                              . ($p['in_note'] ? ' (in a margin note)' : ''),
-                         'text' => Text::inert($p['text']), 'tail' => self::notesLine($p) . self::sourceLine($p['work']) . self::pageLinkLine($p['work'], $p['page_start'] ?? null)];
+                         'text' => Text::inert($p['text']), 'tail' => self::notesLine($p) . self::scanLine($p['work']) . self::sourceLine($p['work'])
+                             . self::pageLinkLine($p['work'], $p['page_start'] ?? null)];
         }
         $notes = $r->notes;
         if ($last < $r->passages) {
@@ -449,6 +486,18 @@ final class Format
     public static function archiveId(string $url): ?string
     {
         return preg_match('~^https://archive\.org/details/([A-Za-z0-9][A-Za-z0-9._-]{0,150})/?$~', trim($url), $m) === 1 ? $m[1] : null;
+    }
+
+    /** "\nText: uncorrected OCR…" for a work whose text is OCR of a scan, else "". */
+    private static function scanLine(array $w): string
+    {
+        return (int) ($w['ocr'] ?? 0) === 1 ? "\n" . self::SCAN_NOTE : '';
+    }
+
+    /** " · Match: close" for a search result that carries a match strength, else "". */
+    private static function matchLabel(?string $match): string
+    {
+        return $match === null ? '' : ' · Match: ' . ($match === 'exact' ? 'exact words' : $match);
     }
 
     private static function sourceLine(array $w): string

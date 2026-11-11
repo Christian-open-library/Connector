@@ -220,6 +220,16 @@ final class Search
     public const PREPARE_CHARS = 20000;      // passage text folded for rerank and dedupe (the rest is cut)
     public const MEANING_DOWN = 'Meaning search unavailable right now; showing keyword matches.';
 
+    /**
+     * Match strength in words, from the reranker's relevance score (rerank-3). Measured 2026-11-11 on the
+     * 75 evaluation questions plus 20 searches the library cannot answer: passages from the expected work
+     * scored 0.89 at the median (0.73 at the 10th percentile); searches on subjects the library has nothing
+     * about never scored above 0.29; searches for modern authors it lacks mostly topped out at 0.54-0.69.
+     * Measure again if the rerank model changes.
+     */
+    public const MATCH_CLOSE = 0.75;     // at or above: "close"
+    public const MATCH_LOOSE = 0.45;     // below: "loose"; in between: "partial"
+
     // Seconds that must remain before starting a stage (the deadline is ~25 s per request).
     private const MIN_SECONDS_RELAX = 5.0;
     private const MIN_SECONDS_EMBED = 3.0;
@@ -322,6 +332,11 @@ final class Search
                     $order = $this->voyage->rerank($modern, array_column($cands, 'doc'),
                         min(count($cands), $limit * 2), $this->deadline);
                     $this->trace['rerank_ms'] = self::ms($t);
+                    foreach ($order as $o) {
+                        if (isset($cands[$o['index']])) {
+                            $cands[$o['index']]['score'] = $o['score'];
+                        }
+                    }
                     $cands = self::reorder($cands, array_column($order, 'index'));
                     $reranked = true;
                 } catch (VoyageException $e) {
@@ -337,10 +352,31 @@ final class Search
         }
         // Breadth: at most PER_WORK passages from one work, unless the search is limited to a few works.
         $perWork = $workIds !== null && count($workIds) <= self::FEW_WORKS ? PHP_INT_MAX : self::PER_WORK;
-        $hits = self::collapse($cands, $limit, $perWork);
+        $hits = self::withMatch(self::collapse($cands, $limit, $perWork), $phrase);
         $sides = array_keys(array_filter(['meaning' => $vectorRan, 'keyword' => $keywordRan]));
         $method = ($sides !== [] ? implode(' + ', $sides) : 'no') . ' search' . ($reranked ? ', re-ranked' : '');
         return new SearchResult($query, 'best', $method, $hits, array_values(array_unique($notes)));
+    }
+
+    /**
+     * Marks each hit with how well it matches: 'exact' (it holds the query word for word), or by the
+     * reranker's score 'close', 'partial' or 'loose'; null when it was not scored.
+     * @param list<array> $hits  @param list<int> $phraseIds  @return list<array>
+     */
+    public static function withMatch(array $hits, array $phraseIds): array
+    {
+        $exact = array_flip($phraseIds);
+        foreach ($hits as $i => $h) {
+            $score = $h['score'] ?? null;
+            $hits[$i]['match'] = isset($exact[$h['id']]) ? 'exact'
+                : ($score === null ? null : self::matchWord((float) $score));
+        }
+        return $hits;
+    }
+
+    public static function matchWord(float $score): string
+    {
+        return $score >= self::MATCH_CLOSE ? 'close' : ($score >= self::MATCH_LOOSE ? 'partial' : 'loose');
     }
 
     /**

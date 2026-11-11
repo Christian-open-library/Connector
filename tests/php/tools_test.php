@@ -131,15 +131,16 @@ function test_search_result_format(): void
     $lines = explode("\n", $text);
     assert_same('Results 1-3 for "the chief end of man" (meaning + keyword search, re-ranked)', $lines[0]);
     assert_same(Format::CONTEXT_RULE, $lines[1], 'explains the context lines');
-    assert_same('', $lines[2]);
-    assert_same('[1] P10400003 · Théodore de Bèze, *A Brief Sum of the Christian Faith* · pp. 10–11 · A Short Catechism',
-        $lines[3], 'unknown year left out; pages as a range');
-    assert_true(str_starts_with($lines[4], 'Before (P10400002 · pp. 9–10): …'), 'end of the passage before: ' . $lines[4]);
-    assert_true(str_ends_with($lines[4], 'them He has also glorified.'), 'it runs up to the result');
+    assert_same(Format::MATCH_RULE, $lines[2], 'explains the match strengths');
+    assert_same('', $lines[3]);
+    assert_same('[1] P10400003 · Théodore de Bèze, *A Brief Sum of the Christian Faith* · pp. 10–11 · A Short Catechism'
+        . ' · Match: exact words', $lines[4], 'unknown year left out; pages as a range; the query is in it word for word');
+    assert_true(str_starts_with($lines[5], 'Before (P10400002 · pp. 9–10): …'), 'end of the passage before: ' . $lines[5]);
+    assert_true(str_ends_with($lines[5], 'them He has also glorified.'), 'it runs up to the result');
     assert_same("What is the chief end of man? Man's chief end is to glorify God, and to enjoy Him for ever. "
         . '[p. 11] What rule has God given to direct us how we may glorify and enjoy Him? The Word of God is the only rule.',
-        $lines[5], 'verbatim text with the page marker');
-    assert_contains('Copied from: https://www.gutenberg.org/ebooks/99999', implode("\n", array_slice($lines, 6, 2)));
+        $lines[6], 'verbatim text with the page marker');
+    assert_contains('Copied from: https://www.gutenberg.org/ebooks/99999', implode("\n", array_slice($lines, 7, 2)));
     assert_same(3, count(Fixture\result_ids($text)));
     assert_not_contains('Search notes', $text, 'nothing to note');
 
@@ -178,8 +179,10 @@ function test_exact_mode_via_tool(): void
     assert_not_contains('repeat the search', $text);
     assert_contains('Only 3 passages contain the exact phrase "deeds of the body"; use an offset below 3.',
         err('search_library', ['query' => 'deeds of the body', 'mode' => 'exact', 'offset' => 5]));
-    assert_contains('No passage contains the exact phrase "xylophone quartet". Old spellings are matched automatically',
-        err('search_library', ['query' => 'xylophone quartet', 'mode' => 'exact']));
+    $none = err('search_library', ['query' => 'xylophone quartet', 'mode' => 'exact']);
+    assert_contains('NOT FOUND: no passage in the library contains the exact phrase "xylophone quartet". Old spellings '
+        . 'are matched automatically', $none);
+    assert_contains('say the library could not confirm it. ' . Format::FROM_MEMORY_RULE, $none);
     $text = ok('search_library', ['query' => 'grace', 'offset' => 4]);
     assert_contains('offset applies only to mode "exact" and was ignored.', $text);
 }
@@ -264,9 +267,14 @@ function test_find_works(): void
     assert_contains('More works match', $two);
     assert_contains('work_id 104 · Théodore de Bèze', ok('find_works', ['author' => 'beze']));
     assert_contains('work_id 103 · Augustine, *The Confessions* (1886)', ok('find_works', ['query' => 'augustine confessions']));
-    assert_contains('No works found for "xylophone"', err('find_works', ['query' => 'xylophone']));
+    $none = err('find_works', ['query' => 'xylophone']);
+    assert_contains('NOT FOUND: no works found for "xylophone"', $none);
+    assert_contains('tell the user the library does not have it. ' . Format::FROM_MEMORY_RULE, $none);
     $some = ok('find_works', ['query' => 'mortification xylophone']);
-    assert_contains('No work matched all the words; these match some of them.', $some);
+    assert_true(str_starts_with($some, 'NOT FOUND AS ASKED: no work in the library matches all the words of '
+        . '"mortification xylophone". The works below match only some of the words.'), 'said first: ' . substr($some, 0, 120));
+    assert_contains(Format::FROM_MEMORY_RULE . "\n\nWorks 1-", $some);
+    assert_false(str_contains(ok('find_works', ['query' => 'augustine confessions']), 'NOT FOUND'), 'a full match says nothing');
     assert_contains('No works in the library match these filters: collection docsouth.',
         err('find_works', ['collection' => 'docsouth']));
 }

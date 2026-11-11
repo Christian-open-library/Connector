@@ -170,6 +170,54 @@ function test_scan_page_links_only_for_internet_archive_items_with_plain_page_nu
         Format::search(new SearchResult('q', 'best', 'keyword search', [$pass($w, '100')], [])));
 }
 
+function test_ocr_texts_say_so_with_every_passage(): void
+{
+    $mk = static fn (int $ocr): array => ['id' => 7, 'author' => 'A', 'author_slug' => '', 'title' => 'T', 'year' => 1850,
+        'source_url' => 'https://archive.org/details/churchofchristtr01bann', 'full_title' => 'T',
+        'collection' => 'internet-archive', 'license' => '', 'type' => 'book', 'n_passages' => 1, 'page_first' => '1',
+        'page_last' => '9', 'ocr' => $ocr];
+    $pass = static fn (array $w): array => ['id' => 700000, 'work_id' => 7, 'seq' => 0, 'page_start' => '100',
+        'page_end' => '100', 'section' => '', 'text' => 'Body', 'notes' => [], 'work' => $w, 'also' => []];
+    $scan = $mk(1);
+    $keyed = $mk(0);
+    $found = Format::search(new SearchResult('q', 'best', 'keyword search', [$pass($scan)], []));
+    assert_contains("Body\n" . Format::SCAN_NOTE . "\nCopied from: https://archive.org/details/churchofchristtr01bann\nScan page:", $found,
+        'under the text, before the source');
+    assert_contains("\n" . Format::SCAN_NOTE . "\n", Format::readPassage($scan, [$pass($scan)], 700000, null, null) . "\n");
+    assert_false(str_contains(Format::search(new SearchResult('q', 'best', 'keyword search', [$pass($keyed)], [])), 'OCR'),
+        'a keyed text carries no note');
+    assert_false(str_contains(Format::readPassage($keyed, [$pass($keyed)], 700000, null, null), 'uncorrected OCR'));
+}
+
+function test_match_strength_is_said_in_words(): void
+{
+    assert_same('close', Search::matchWord(Search::MATCH_CLOSE));
+    assert_same('partial', Search::matchWord(Search::MATCH_CLOSE - 0.01));
+    assert_same('partial', Search::matchWord(Search::MATCH_LOOSE));
+    assert_same('loose', Search::matchWord(Search::MATCH_LOOSE - 0.01));
+    $hits = Search::withMatch([['id' => 1, 'score' => 0.2], ['id' => 2, 'score' => 0.9], ['id' => 3], ['id' => 4, 'score' => 0.5]], [1]);
+    assert_same(['exact', 'close', null, 'partial'], array_column($hits, 'match'), 'the words themselves outrank the score');
+
+    $w = ['id' => 7, 'author' => 'A', 'author_slug' => '', 'title' => 'T', 'year' => 1850, 'source_url' => '', 'full_title' => 'T',
+        'collection' => 'ccel', 'license' => '', 'type' => 'book', 'n_passages' => 1, 'page_first' => null, 'page_last' => null, 'ocr' => 0];
+    $pass = static fn (int $id, ?string $match): array => ['id' => $id, 'work_id' => 7, 'seq' => 0, 'page_start' => null,
+        'page_end' => null, 'section' => '', 'text' => 'Body', 'notes' => [], 'work' => $w, 'also' => [], 'match' => $match];
+    $show = static fn (array $hits): string => Format::search(new SearchResult('q', 'best', 'keyword search, re-ranked', $hits, []));
+    $good = $show([$pass(700000, 'close'), $pass(700001, 'loose')]);
+    assert_contains("\n" . Format::MATCH_RULE . "\n", $good);
+    assert_contains('[1] P700000 · A, *T* (1850) · Match: close', $good);
+    assert_contains('[2] P700001 · A, *T* (1850) · Match: loose', $good);
+    assert_false(str_contains($good, 'NO CLOSE MATCH') || str_contains($good, 'NOT FOUND'), 'one close match is enough');
+    $weak = $show([$pass(700000, 'partial'), $pass(700001, 'loose')]);
+    assert_contains("\n" . Format::NO_CLOSE_MATCH . "\n", $weak);
+    assert_false(str_contains($weak, 'NOT FOUND'));
+    $none = $show([$pass(700000, 'loose'), $pass(700001, 'loose')]);
+    assert_contains("\n" . Format::NO_MATCH . "\n", $none);
+    assert_contains(Format::FROM_MEMORY_RULE, $none);
+    $unscored = $show([$pass(700000, null)]);
+    assert_false(str_contains($unscored, 'Match'), 'nothing is said when results were not scored');
+}
+
 function test_every_library_field_is_inert_in_results(): void
 {
     $work = ['id' => 7, 'author' => "Evil\e[8m " . HOSTILE, 'author_slug' => '', 'title' => HOSTILE, 'year' => 1650,
