@@ -80,9 +80,11 @@ final class Mcp
     public const UNSUPPORTED_VERSION = -32022;
 
     /** initialize / server/discover instructions (claude.ai currently does not pass them to the model). */
-    public const INSTRUCTIONS = 'The Christian Open Library: about 4,200 public-domain Christian books from the '
-        . '1500s to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the Church '
-        . 'Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and confessions, and more), '
+    public const INSTRUCTIONS = 'The Christian Open Library: about 4,700 public-domain works, mostly Christian, from the '
+        . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
+        . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
+        . 'confessions, verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
+        . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more), '
         . 'with Bible translations and older Bible and theological dictionaries. Search with several phrasings for '
         . 'broad questions, and use exact mode for a remembered phrase. Quote only words that appear verbatim in '
         . 'a returned passage (spelling may be modernized if every word stays; say so), and cite author, title, year and page. "[p. 23]" inside passage text marks where '

@@ -66,10 +66,11 @@ final class Tools
         $search = [
             'name' => 'search_library',
             'title' => 'Search the Christian Open Library',
-            'description' => 'Search the Christian Open Library: about 4,200 public-domain Christian books from the '
-                . '1500s to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
-                . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and confessions, '
-                . 'and more). Finds passages by meaning and by keywords, then re-ranks them. Old spellings are handled '
+            'description' => 'Search the Christian Open Library: about 4,700 public-domain works, mostly Christian, from the '
+        . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
+        . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
+        . 'confessions, verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
+        . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more). Finds passages by meaning and by keywords, then re-ranks them. Old spellings are handled '
                 . 'automatically: a search for "sin" also finds "ſinne". Returns verbatim passages, each with a ref '
                 . '(e.g. P1234500017; the digits before the last five are the work_id, here 12345), author, title, '
                 . 'year, page numbers, section and the link it was copied from. The text is the library\'s own copy (the Christian Open Library collection, github.com/Christian-open-library, updated nightly). Each work\'s "Copied from" link is where that copy was transcribed or scanned from, for checking against the original. Passage text keeps the original spelling; "[p. 23]" '

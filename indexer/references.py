@@ -253,14 +253,30 @@ def _refs_for(rows):
     return out
 
 
+# Cross-reference tables list hundreds of thousands of verses and would turn up for almost every verse in
+# "who cited this verse": left out of the citation index (the text stays searchable and readable).
+NO_CITATIONS_TITLES = ('Treasury of Scripture Knowledge',)
+
+
+def no_citation_work_ids(db: sqlite3.Connection) -> set:
+    ids = set()
+    for t in NO_CITATIONS_TITLES:
+        ids |= {r[0] for r in db.execute('SELECT id FROM works WHERE title LIKE ? OR full_title LIKE ?', (f'%{t}%', f'%{t}%'))}
+    return ids
+
+
 def add_scripture_refs(db: sqlite3.Connection, limits: dict, processes: int = 3) -> int:
+    skip = no_citation_work_ids(db)
+
     def chunks():
         cur = db.execute('SELECT id, work_id, text, notes FROM passages ORDER BY id')
         while True:
             rows = cur.fetchmany(2000)
             if not rows:
                 return
-            yield rows
+            rows = [r for r in rows if r[1] not in skip]
+            if rows:
+                yield rows
     n = 0
     # read everything first: sqlite cursors and a pool writing back do not mix well
     batches = list(chunks())

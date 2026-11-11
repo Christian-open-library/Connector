@@ -40,6 +40,16 @@ class DictionaryHeads(unittest.TestCase):
         self.assertLess(time.perf_counter() - t, 1.0)
 
 
+class CitationExclusions(unittest.TestCase):
+    def test_cross_reference_tables_are_left_out_of_the_citation_index(self):
+        import sqlite3
+        db = sqlite3.connect(':memory:')
+        db.execute('CREATE TABLE works(id INTEGER PRIMARY KEY, title TEXT, full_title TEXT)')
+        db.executemany('INSERT INTO works VALUES (?,?,?)', [
+            (1, 'The Treasury of Scripture Knowledge', ''), (2, 'Sermons', ''), (3, 'x', 'A Treasury of Scripture Knowledge, 1836')])
+        self.assertEqual(references.no_citation_work_ids(db), {1, 3})
+
+
 class BibleChecks(unittest.TestCase):
     def test_a_verse_parsed_twice_stops_the_build(self):
         rows = [('kjv', 15, 1, 1, 'Now in the first year of Cyrus'), ('kjv', 15, 1, 2, 'Thus saith Cyrus')]
