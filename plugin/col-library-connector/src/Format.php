@@ -66,7 +66,8 @@ final class Format
         }
         $blocks = [];
         foreach ($r->hits as $i => $p) {
-            $head = self::passageHeader($p, $r->offset + $i + 1) . self::matchLabel($p['match'] ?? null);
+            $head = self::passageHeader($p, $r->offset + $i + 1) . self::matchLabel($p['match'] ?? null)
+                . self::authorLine($p['work']);
             if (isset($p['context_before'])) {
                 $head .= "\n" . self::contextLine($p['context_before'], 'before');
             }
@@ -207,6 +208,7 @@ final class Format
         }
         $where = array_filter([$work['source_url'] !== '' ? 'Copied from: ' . self::field($work['source_url'], 500) : '',
                                $work['license'] !== '' ? 'License: ' . self::field($work['license'], 200) : '']);
+        $top .= self::authorLine($work);
         $top .= $where !== [] ? "\n" . implode(' · ', $where) : '';
         $top .= self::scanLine($work);
         $blocks = [];
@@ -253,6 +255,9 @@ final class Format
                 $facts[] = 'License: ' . self::field($w['license'], 200);
             }
             $lines[] = implode(' · ', $facts);
+            if (($w['author_note'] ?? '') !== '') {
+                $lines[] = ltrim(self::authorLine($w));
+            }
             if ($w['source_url'] !== '') {
                 $lines[] = 'Copied from: ' . self::field($w['source_url'], 500);
             }
@@ -327,7 +332,7 @@ final class Format
         $blocks = [];
         foreach ($r->hits as $i => $p) {
             $blocks[] = ['head' => self::passageHeader($p, $r->offset + $i + 1) . " · (cites {$p['cites']})"
-                             . ($p['in_note'] ? ' (in a margin note)' : ''),
+                             . ($p['in_note'] ? ' (in a margin note)' : '') . self::authorLine($p['work']),
                          'text' => Text::inert($p['text']), 'tail' => self::notesLine($p) . self::scanLine($p['work']) . self::sourceLine($p['work'])
                              . self::pageLinkLine($p['work'], $p['page_start'] ?? null)];
         }
@@ -492,6 +497,17 @@ final class Format
     private static function scanLine(array $w): string
     {
         return (int) ($w['ocr'] ?? 0) === 1 ? "\n" . self::SCAN_NOTE : '';
+    }
+
+    /**
+     * "\nAuthor: Albert Barnes (1798–1870, American Presbyterian minister, New School)" when the library
+     * has a note on the author, else "". It says who is speaking; it does not judge him.
+     */
+    private static function authorLine(array $w): string
+    {
+        $note = (string) ($w['author_note'] ?? '');
+        return $note === '' || $w['author'] === '' ? ''
+            : "\nAuthor: " . self::field($w['author'], 200) . ' (' . self::field($note, 300) . ')';
     }
 
     /** " · Match: close" for a search result that carries a match strength, else "". */

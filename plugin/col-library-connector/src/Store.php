@@ -50,6 +50,8 @@ final class Store
     private ?array $allWorks = null;
     /** @var array<int,array> works fetched one by one */
     private array $workCache = [];
+    /** @var array<string,string>|null author name => "dates, note"; null until read ([] for a build without the table) */
+    private ?array $authorNotes = null;
     /** @var array<string,string|false> word => modern spelling (false = none) */
     private array $spellCache = [];
     /** @var array<int,array>|null Bible books by id */
@@ -147,7 +149,7 @@ final class Store
         if ($this->allWorks === null) {
             $this->allWorks = [];
             foreach ($this->run('SELECT ' . self::WORK_COLUMNS . ' FROM works ORDER BY id')->fetchAll() as $w) {
-                $this->allWorks[(int) $w['id']] = self::workRow($w);
+                $this->allWorks[(int) $w['id']] = $this->noted(self::workRow($w));
             }
         }
         return $this->allWorks;
@@ -177,7 +179,7 @@ final class Store
         foreach (array_chunk($need, self::IN_CHUNK) as $chunk) {
             $st = $this->run('SELECT ' . self::WORK_COLUMNS . ' FROM works WHERE id IN (' . self::marks($chunk) . ')', $chunk);
             foreach ($st->fetchAll() as $w) {
-                $w = self::workRow($w);
+                $w = $this->noted(self::workRow($w));
                 $out[$w['id']] = $this->workCache[$w['id']] = $w;
             }
         }
@@ -775,6 +777,53 @@ final class Store
         }
         $st->execute();
         return $st;
+    }
+
+    /** The work row with 'author_note': who the author was ("1798–1870, American Presbyterian minister"), or ''. */
+    private function noted(array $w): array
+    {
+        $note = $this->authorNotes()[$w['author']] ?? '';
+        $w['author_note'] = $note !== '' && self::noteFits($note, $w['year']) ? $note : '';
+        return $w;
+    }
+
+    /**
+     * False when a work cannot be by the author the note describes: the catalogue sometimes files two
+     * people under one name, so a work printed before the noted author was ten years old gets no note.
+     * Notes without a plain birth year ("d. 1617", "fl. 1650s", "c. 428–348 BC") always fit.
+     */
+    public static function noteFits(string $note, ?int $workYear): bool
+    {
+        if ($workYear === null || str_contains($note, 'BC')
+            || preg_match('/^(?:c\. )?(\d{3,4})\s*–/u', $note, $m) !== 1) {
+            return true;
+        }
+        return $workYear >= (int) $m[1] + 10;
+    }
+
+    /**
+     * Author name => dates and a short description, from the build's authors table (indexer: the books
+     * repository's authors.csv). Builds made before that table existed have none: every note is ''.
+     * @return array<string,string>
+     */
+    private function authorNotes(): array
+    {
+        if ($this->authorNotes === null) {
+            $this->authorNotes = [];
+            try {
+                if ($this->hasTables('authors')) {
+                    foreach ($this->run('SELECT name, dates, note FROM authors')->fetchAll() as $a) {
+                        $text = implode(', ', array_filter([trim((string) $a['dates']), trim((string) $a['note'])], 'strlen'));
+                        if ($text !== '') {
+                            $this->authorNotes[(string) $a['name']] = $text;
+                        }
+                    }
+                }
+            } catch (\PDOException $e) {
+                $this->authorNotes = [];   // unreadable table: results simply carry no author notes
+            }
+        }
+        return $this->authorNotes;
     }
 
     private static function marks(array $values): string

@@ -44,6 +44,8 @@ CREATE VIRTUAL TABLE works_fts USING fts5(
   author, title, full_title, content='works', content_rowid='id',
   tokenize='porter unicode61 remove_diacritics 2');
 CREATE TABLE spelling(variant TEXT PRIMARY KEY, standard TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE authors(name TEXT PRIMARY KEY, dates TEXT NOT NULL, tradition TEXT NOT NULL,
+                     note TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE ivf(cluster INTEGER PRIMARY KEY, centroid BLOB NOT NULL,
                  start INTEGER NOT NULL, count INTEGER NOT NULL);
 """
@@ -182,6 +184,11 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3) -
     emb.commit()
 
     db.execute("INSERT INTO works_fts(works_fts) VALUES('rebuild')")
+    # Who each author was (the repo's authors.csv), for the authors this build holds.
+    held = {row[0] for row in db.execute('SELECT DISTINCT author FROM works')}
+    notes = [(name, *fields) for name, fields in sorted(corpus.load_authors(repo).items()) if name in held]
+    db.executemany('INSERT INTO authors(name, dates, tradition, note) VALUES (?,?,?,?)', notes)
+    print(f'  author notes: {len(notes)} of {len(held)} authors', flush=True)
     spell = {}
     for (variant, standard), n in used_total.items():
         if n >= 2 and variant != standard:

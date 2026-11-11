@@ -189,6 +189,18 @@ function test_ocr_texts_say_so_with_every_passage(): void
     assert_false(str_contains(Format::readPassage($keyed, [$pass($keyed)], 700000, null, null), 'uncorrected OCR'));
 }
 
+function test_an_author_note_is_withheld_from_a_work_older_than_the_author(): void
+{
+    assert_true(Store::noteFits('1616–1683, English Puritan', 1668));
+    assert_true(Store::noteFits('1616–1683, English Puritan', 1850), 'a later edition is still his');
+    assert_true(Store::noteFits('1616–1683, English Puritan', null), 'no year to go by');
+    assert_false(Store::noteFits('1616–1683, English Puritan', 1607), 'printed before he was born: another man of the name');
+    assert_false(Store::noteFits('c. 1620–1686, English Puritan preacher', 1582));
+    assert_true(Store::noteFits('c. 428–348 BC, Athenian philosopher', 1871), 'ancient authors: any edition');
+    assert_true(Store::noteFits('d. 1617, English Puritan preacher', 1600), 'no birth year to compare');
+    assert_true(Store::noteFits('English Presbyterian minister, London', 1650), 'no dates at all');
+}
+
 function test_match_strength_is_said_in_words(): void
 {
     assert_same('close', Search::matchWord(Search::MATCH_CLOSE));

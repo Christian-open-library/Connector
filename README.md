@@ -1,6 +1,6 @@
 # Christian Open Library connector
 
-The AI connector for the [Christian Open Library](https://github.com/Christian-open-library): about 4,700 public-domain works, mostly Christian (the Church Fathers, the Reformers, the Puritans, Spurgeon, Edwards, creeds and confessions, verse-by-verse commentaries and Greek and Hebrew study helps, sermons, the Princeton Review, poetry and fiction, and classic philosophy), seven Bibles and classic Bible dictionaries, searchable from AI apps such as Claude, ChatGPT and Gemini.
+The AI connector for the [Christian Open Library](https://github.com/Christian-open-library): about 4,600 public-domain works, mostly Christian (the Church Fathers, the Reformers, the Puritans, Spurgeon, Edwards, creeds and confessions, verse-by-verse commentaries and Greek and Hebrew study helps, sermons, the Princeton Review, poetry and fiction, and classic philosophy), seven Bibles and classic Bible dictionaries, searchable from AI apps such as Claude, ChatGPT and Gemini.
 
 It's a [Model Context Protocol](https://modelcontextprotocol.io) server. Your AI app asks it questions, and it answers with passages quoted word for word from the library's copies of the books, with the author and title, and the year and page where the source gives them, so you can check them.
 

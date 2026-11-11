@@ -66,7 +66,7 @@ final class Tools
         $search = [
             'name' => 'search_library',
             'title' => 'Search the Christian Open Library',
-            'description' => 'Search the Christian Open Library: about 4,700 public-domain works, mostly Christian, from the '
+            'description' => 'Search the Christian Open Library: about 4,600 public-domain works, mostly Christian, from the '
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
         . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
         . 'confessions, verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
@@ -77,7 +77,10 @@ final class Tools
                 . 'partial or loose) and the link it was copied from. When a result begins NOT FOUND or NO CLOSE MATCH, '
                 . 'tell the user the library does not have it or may not have it; never quote or cite something from memory '
                 . 'as though it came from the library. Passages from scanned books are marked as uncorrected OCR: check '
-                . 'their wording against the scan. The text is the library\'s own copy (the Christian Open Library collection, github.com/Christian-open-library, updated nightly). Each work\'s "Copied from" link is where that copy was transcribed or scanned from, for checking against the original. Passage text keeps the original spelling; "[p. 23]" '
+                . 'their wording against the scan. Where known, an "Author:" line gives the writer\'s dates and '
+                . 'tradition (for example Puritan, Roman Catholic, Lutheran, Church Father): the library holds writers '
+                . 'who disagree with one another, so say who a writer was when it bears on the question, and do not present '
+                . 'one writer as speaking for another tradition. The text is the library\'s own copy (the Christian Open Library collection, github.com/Christian-open-library, updated nightly). Each work\'s "Copied from" link is where that copy was transcribed or scanned from, for checking against the original. Passage text keeps the original spelling; "[p. 23]" '
                 . 'inside text marks where page 23 begins. Each result also shows the end of the passage before it and the '
                 . 'start of the one after (the whole neighbour when it opens with an objection, question or answer), so a '
                 . 'quote can be checked in context without another call. Results come from different works (at most 2 '

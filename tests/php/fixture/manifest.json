@@ -23,8 +23,8 @@
  },
  "files": {
   "library.sqlite": {
-   "bytes": 1892352,
-   "sha256": "8920a27fcc07289c8b77c47d0cca73b125ad38a5b4cf7547aeacf0b7ad6f3cec"
+   "bytes": 1896448,
+   "sha256": "fa0a3ae147a9e4a359c14c66e164fc7237b05f3e930162a4daf797066865201f"
   },
   "vectors.bin": {
    "bytes": 216,

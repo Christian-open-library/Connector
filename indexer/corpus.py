@@ -157,6 +157,44 @@ def load_catalog(repo: Path) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
+TRADITIONS = frozenset((
+    'Church Father', 'Medieval', 'Roman Catholic', 'Eastern Orthodox', 'Lutheran', 'Reformed', 'Presbyterian',
+    'Puritan', 'Congregationalist', 'Anglican', 'Baptist', 'Methodist', 'Quaker', 'Anabaptist', 'Brethren',
+    'Moravian', 'Unitarian', 'Jewish', 'Philosopher', 'Classical', 'Other Christian', 'Other'))
+# What an author note may hold: letters, digits, spaces and plain punctuation. The notes reach an AI
+# with every result, so anything else (markup, links, control characters) drops the row.
+AUTHOR_TEXT_RE = re.compile(r"[\w .,;:'’()&/–-]*")
+AUTHOR_DATES_MAX = 40
+AUTHOR_NOTE_MAX = 160
+
+
+def load_authors(repo: Path) -> dict[str, tuple[str, str, str]]:
+    """Author name -> (dates, tradition, note) from the repo's authors.csv (columns Author, Dates,
+    Tradition, Note). {} when there is no such file. A row with an unknown tradition, an over-long
+    field or characters outside AUTHOR_TEXT_RE is skipped with a warning; a row with nothing to say
+    is skipped silently."""
+    try:
+        path = repo_file(repo, 'authors.csv')
+    except (UnsafePath, FileNotFoundError):
+        return {}
+    out: dict[str, tuple[str, str, str]] = {}
+    with open(path, newline='', encoding='utf-8') as fh:
+        for row in csv.DictReader(fh):
+            name = clean_meta(row.get('Author') or '')
+            dates = clean_meta(row.get('Dates') or '')
+            tradition = clean_meta(row.get('Tradition') or '')
+            note = clean_meta(row.get('Note') or '')
+            if not name or not (dates or note):
+                continue
+            if (tradition and tradition not in TRADITIONS) or len(dates) > AUTHOR_DATES_MAX \
+                    or len(note) > AUTHOR_NOTE_MAX or not AUTHOR_TEXT_RE.fullmatch(dates) \
+                    or not AUTHOR_TEXT_RE.fullmatch(note):
+                warn(f'author note refused: {name[:80]!r}')
+                continue
+            out[name] = (dates, tradition, note)
+    return out
+
+
 def valid_rows(repo: Path, rows: list[dict]) -> list[dict]:
     """Catalog rows whose File is a safe, existing repo file (the others are skipped with a
     warning), each File once."""

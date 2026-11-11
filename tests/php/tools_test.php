@@ -143,6 +143,7 @@ function test_search_result_format(): void
     assert_contains('Copied from: https://www.gutenberg.org/ebooks/99999', implode("\n", array_slice($lines, 7, 2)));
     assert_same(3, count(Fixture\result_ids($text)));
     assert_not_contains('Search notes', $text, 'nothing to note');
+    assert_false(str_contains($lines[5], 'Author:'), 'an author the library has no note on gets no author line');
 
     // Two editions of the same passage: one is a result, the other is named on its "Also in" line.
     $text = ok('search_library', ['query' => 'be killing sin or it will be killing you', 'author' => 'Owen']);
@@ -161,7 +162,7 @@ function test_search_result_format(): void
 
     $text = ok('search_library', ['query' => 'the deeds of the body', 'mode' => 'exact']);
     assert_contains("[2] P10100007 · John Owen, *Of the Mortification of Sinne in Beleevers* (1668) · p. 4 · CHAP. II.\n"
-        . 'Before (P10100006', $text, 'the passage before comes first');
+        . "Author: John Owen (1616–1683, English Puritan, Congregationalist)\n" . 'Before (P10100006', $text, 'who the author was, then the passage before');
     assert_contains("\nThe Spirite alone is ſufficient for this worke;", $text, 'verbatim old spelling');
     assert_true((bool) preg_match('/deeds of the body\\.\\nNotes: Ezek\\. 36\\. 26\\. \\| Rom\\. 8\\. 13\\.\\n(?:After \\(P\\d+[^\\n]*\\n)?'
         . 'Copied from: https:\\/\\/quod\\.lib\\.umich\\.edu\\/e\\/eebo\\/A53698\\.0001\\.001/u', $text), 'notes, the text after, then source');
@@ -193,7 +194,8 @@ function test_read_passage_by_ref(): void
     $lines = explode("\n", $text);
     assert_same('John Owen, *Of the Mortification of Sinne in Beleevers* (1668) · work_id 101 · EEBO-TCP (original 1500s-1700s editions)', $lines[0]);
     assert_same('Full title: Of the mortification of sinne in beleevers: the necessity, nature, and means of it', $lines[1]);
-    assert_same('Copied from: https://quod.lib.umich.edu/e/eebo/A53698.0001.001 · License: cc0', $lines[2]);
+    assert_same('Author: John Owen (1616–1683, English Puritan, Congregationalist)', $lines[2], 'who the author was');
+    assert_same('Copied from: https://quod.lib.umich.edu/e/eebo/A53698.0001.001 · License: cc0', $lines[3]);
     preg_match_all('/^P(\d+) · /m', $text, $m);
     assert_same(['10100002', '10100003', '10100005'], $m[1], 'neighbours skip the missing seq 4');
     assert_contains('P10100003 · p. 1 · CHAP. I. · (requested passage)', $text);
@@ -257,7 +259,9 @@ function test_find_works(): void
     assert_contains("[1] work_id 101 · John Owen, *Of the Mortification of Sinne in Beleevers* (1668)\n"
         . "Full title: Of the mortification of sinne in beleevers: the necessity, nature, and means of it\n"
         . "book · EEBO-TCP (original 1500s-1700s editions) · 9 passages · pp. iii–5 · License: cc0\n"
+        . "Author: John Owen (1616–1683, English Puritan, Congregationalist)\n"
         . 'Copied from: https://quod.lib.umich.edu/e/eebo/A53698.0001.001', $owen);
+    assert_false(str_contains(ok('find_works', ['author' => 'beze']), 'Author:'), 'no note on the author: no line');
 
     $all = ok('find_works', []);
     preg_match_all('/^\[\d+\] work_id (\d+) /m', $all, $m);

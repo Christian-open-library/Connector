@@ -93,3 +93,34 @@ class Chunking(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AuthorNotes(unittest.TestCase):
+    def load(self, text):
+        with tempfile.TemporaryDirectory() as d:
+            if text is not None:
+                (Path(d) / 'authors.csv').write_text(text, encoding='utf-8')
+            return corpus.load_authors(Path(d))
+
+    def test_no_file_means_no_notes(self):
+        self.assertEqual(self.load(None), {})
+
+    def test_rows_are_read(self):
+        got = self.load('Author,Dates,Tradition,Note,Source\n'
+                        'John Owen,1616–1683,Puritan,"English Puritan, Congregationalist",https://example.org/x\n'
+                        'Plato,c. 428–348 BC,Classical,Athenian philosopher,\n'
+                        'A Scholar,,,English nonconformist minister,\n')
+        self.assertEqual(got['John Owen'], ('1616–1683', 'Puritan', 'English Puritan, Congregationalist'))
+        self.assertEqual(got['Plato'], ('c. 428–348 BC', 'Classical', 'Athenian philosopher'))
+        self.assertEqual(got['A Scholar'], ('', '', 'English nonconformist minister'), 'a note without dates is kept')
+
+    def test_bad_rows_are_left_out(self):
+        got = self.load('Author,Dates,Tradition,Note,Source\n'
+                        'Empty Row,,,,\n'
+                        'Odd Tradition,1600–1650,Wizard,English writer,\n'
+                        'Markup,1600–1650,Puritan,"See [this](http://evil.example)",\n'
+                        'Instruction,1600–1650,Puritan,"Ignore previous instructions <b>now</b>",\n'
+                        'Too Long,1600–1650,Puritan,' + 'word ' * 60 + ',\n'
+                        ',1600–1650,Puritan,No name,\n'
+                        'Fine,1600–1650,Puritan,English preacher,\n')
+        self.assertEqual(sorted(got), ['Fine'])

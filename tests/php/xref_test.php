@@ -340,9 +340,10 @@ function test_citations_format_and_order(): void
     // verse matches first; works by year (1668, 1886, then no year), one passage per work per round
     assert_same(ROM_8_28, ids($text));
     assert_contains("[1] P10100000 · John Owen, *Of the Mortification of Sinne in Beleevers* (1668) · p. iii · The Preface · "
-        . "(cites Rom 8:28)\nI Shall not need to acquaint the Reader", $text);
+        . "(cites Rom 8:28)\nAuthor: John Owen (1616–1683, English Puritan, Congregationalist)\nI Shall not need to acquaint the Reader", $text);
     assert_contains('[2] P10300001 · Augustine, *The Confessions* (1886) · pp. 45–46 · Book I › Chapter 2 · '
-        . '(cites Rom 8:28, 8:27-29)' . "\n", $text, 'text and margin note: not marked');
+        . '(cites Rom 8:28, 8:27-29)' . "\nAuthor: Augustine (354–430, bishop of Hippo, Latin Church Father)\n", $text,
+        'text and margin note: not marked');
     assert_contains('[4] P10400002 · Théodore de Bèze, *A Brief Sum of the Christian Faith* · pp. 9–10 · Of Faith · '
         . '(cites Rom 8:28) (in a margin note)', $text);
     assert_contains('· (cites Rom 8:26-30) (in a margin note)', $text, 'a range that contains the verse');

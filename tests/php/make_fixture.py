@@ -265,6 +265,13 @@ def main() -> None:
             w['type'], w['collection'], w['license'], w['source_url'], w['tcp_id'], w['series'],
             int(w['ocr']), len(pages), first, last))
     db.execute("INSERT INTO works_fts(works_fts) VALUES('rebuild')")
+    # Who the authors were (the build takes this from the books repository's authors.csv). Bèze has no row.
+    db.execute('CREATE TABLE IF NOT EXISTS authors(name TEXT PRIMARY KEY, dates TEXT NOT NULL, tradition TEXT NOT NULL, '
+               'note TEXT NOT NULL) WITHOUT ROWID')
+    db.executemany('INSERT INTO authors(name, dates, tradition, note) VALUES (?,?,?,?)', [
+        ('John Owen', '1616–1683', 'Puritan', 'English Puritan, Congregationalist'),
+        ('Augustine', '354–430', 'Church Father', 'bishop of Hippo, Latin Church Father'),
+    ])
     db.executemany('INSERT INTO spelling(variant, standard) VALUES (?,?)', sorted(SPELLING.items()))
 
     # Vectors: hashed bag of words (the PHP fake mode computes the same for queries).
