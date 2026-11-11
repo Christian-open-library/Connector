@@ -2,6 +2,8 @@
 
 *Measured on 11 November 2026 against the live library (4,573 works).*
 
+The plain-language version of these results, kept up to date, is at [christianopenlibrary.org/accuracy.html](https://christianopenlibrary.org/accuracy.html).
+
 ## What is tested
 
 A set of 75 questions (`tests/eval/questions.jsonl`), each with the book or books that should come back. The test asks the connector each question and checks whether an expected book is among the top results. It only checks that the right **book** appears, not that the right passage is on top, and not that an AI app then summarizes it well.
