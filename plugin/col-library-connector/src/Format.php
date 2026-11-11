@@ -67,7 +67,7 @@ final class Format
             if (isset($p['context_after'])) {
                 $tail .= "\n" . self::contextLine($p['context_after'], 'after');
             }
-            $tail .= self::sourceLine($p['work']);
+            $tail .= self::sourceLine($p['work']) . self::pageLinkLine($p['work'], $p['page_start'] ?? null);
             if ($p['also'] !== []) {
                 $also = [];
                 foreach ($p['also'] as $a) {
@@ -185,7 +185,8 @@ final class Format
             if ($p['id'] === $targetId) {
                 $head .= ' · (requested passage)';
             }
-            $blocks[] = ['head' => $head, 'text' => Text::inert($p['text']), 'tail' => rtrim(self::notesLine($p))];
+            $blocks[] = ['head' => $head, 'text' => Text::inert($p['text']),
+                         'tail' => rtrim(self::notesLine($p) . self::pageLinkLine($work, $p['page_start'] ?? null))];
         }
         $foot = [];
         $foot[] = $previousId !== null ? "Earlier text: ref P$previousId" : 'This is the beginning of the work.';
@@ -291,7 +292,7 @@ final class Format
         foreach ($r->hits as $i => $p) {
             $blocks[] = ['head' => self::passageHeader($p, $r->offset + $i + 1) . " · (cites {$p['cites']})"
                              . ($p['in_note'] ? ' (in a margin note)' : ''),
-                         'text' => Text::inert($p['text']), 'tail' => self::notesLine($p) . self::sourceLine($p['work'])];
+                         'text' => Text::inert($p['text']), 'tail' => self::notesLine($p) . self::sourceLine($p['work']) . self::pageLinkLine($p['work'], $p['page_start'] ?? null)];
         }
         $notes = $r->notes;
         if ($last < $r->passages) {
@@ -428,6 +429,26 @@ final class Format
         }
         return "\nNotes: " . Text::inert(Text::clip(implode(' | ', array_map(static fn (string $n): string
             => Text::oneLine($n, self::NOTES_MAX), $p['notes'])), self::NOTES_MAX));
+    }
+
+    /**
+     * "\nScan page: <url>" for a passage of a work copied from an Internet Archive scan whose first page is a plain
+     * printed page number: archive.org opens its viewer at the page with that printed label (".../page/100").
+     * Other sources have no page-level address.
+     */
+    private static function pageLinkLine(array $w, ?string $pageStart): string
+    {
+        $id = self::archiveId((string) ($w['source_url'] ?? ''));
+        if ($id === null || $pageStart === null || !preg_match('/^[1-9][0-9]{0,4}$/', trim($pageStart))) {
+            return '';
+        }
+        return "\nScan page: https://archive.org/details/$id/page/" . trim($pageStart) . '/mode/1up';
+    }
+
+    /** The Internet Archive item name of a "https://archive.org/details/<id>" address, or null. */
+    public static function archiveId(string $url): ?string
+    {
+        return preg_match('~^https://archive\.org/details/([A-Za-z0-9][A-Za-z0-9._-]{0,150})/?$~', trim($url), $m) === 1 ? $m[1] : null;
     }
 
     private static function sourceLine(array $w): string

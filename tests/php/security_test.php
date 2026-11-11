@@ -148,6 +148,28 @@ function test_inert_escapes_markup_and_nothing_else(): void
     assert_inert(Text::inert(HOSTILE), 'hostile');
 }
 
+function test_scan_page_links_only_for_internet_archive_items_with_plain_page_numbers(): void
+{
+    assert_same('churchofchristtr01bann', Format::archiveId('https://archive.org/details/churchofchristtr01bann'));
+    assert_same(null, Format::archiveId('https://archive.org/details/x/../../evil'), 'no path tricks');
+    assert_same(null, Format::archiveId('https://evil.example/https://archive.org/details/x'));
+    assert_same(null, Format::archiveId('https://archive.org/details/x?query=1'));
+    $mk = static fn (string $url, ?string $page): array => ['id' => 7, 'author' => 'A', 'author_slug' => '', 'title' => 'T',
+        'year' => 1850, 'source_url' => $url, 'full_title' => 'T', 'collection' => 'internet-archive', 'license' => '',
+        'type' => 'book', 'n_passages' => 1, 'page_first' => '1', 'page_last' => '9'];
+    $pass = static fn (array $w, ?string $page): array => ['id' => 700000, 'work_id' => 7, 'seq' => 0, 'page_start' => $page,
+        'page_end' => $page, 'section' => '', 'text' => 'Body', 'notes' => [], 'work' => $w, 'also' => []];
+    $w = $mk('https://archive.org/details/churchofchristtr01bann', null);
+    assert_contains("Scan page: https://archive.org/details/churchofchristtr01bann/page/100/mode/1up",
+        Format::readPassage($w, [$pass($w, '100')], 700000, null, null));
+    assert_false(str_contains(Format::readPassage($w, [$pass($w, 'xii')], 700000, null, null), 'Scan page:'), 'roman page: no link');
+    assert_false(str_contains(Format::readPassage($w, [$pass($w, null)], 700000, null, null), 'Scan page:'), 'no page: no link');
+    $g = $mk('https://www.gutenberg.org/ebooks/99999', null);
+    assert_false(str_contains(Format::readPassage($g, [$pass($g, '100')], 700000, null, null), 'Scan page:'), 'other sources: no link');
+    assert_contains('Scan page: https://archive.org/details/churchofchristtr01bann/page/100/mode/1up',
+        Format::search(new SearchResult('q', 'best', 'keyword search', [$pass($w, '100')], [])));
+}
+
 function test_every_library_field_is_inert_in_results(): void
 {
     $work = ['id' => 7, 'author' => "Evil\e[8m " . HOSTILE, 'author_slug' => '', 'title' => HOSTILE, 'year' => 1650,
