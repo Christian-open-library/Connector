@@ -25,7 +25,7 @@ from .voyage import Voyage
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / 'data' / 'emb_cache.sqlite'
 DOC_MODEL = 'voyage-4-lite'
-QUERY_MODEL = 'voyage-4-lite'
+QUERY_MODEL = 'voyage-4-large'   # searches are understood by the large model; books stay indexed with the lite one (shared space), 2026-11-11 test
 DIMS = 512
 PRICE_PER_M = 0.02          # dollars per million tokens for DOC_MODEL
 CHARS_PER_TOKEN = 3.2       # conservative for old spelling
