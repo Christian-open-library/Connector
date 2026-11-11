@@ -49,6 +49,10 @@ Each search result is marked as an exact, close, partial or loose match. When th
 
 See [SECURITY.md](SECURITY.md) for how to report a problem, and [docs/security-review.md](docs/security-review.md) for the latest review.
 
+## How well does search work?
+
+A 75-question test checks whether the right book comes back. Today about 87% of questions find it in the top 8 results. The method, results by kind of question, and the limits of the test are in [docs/evaluation.md](docs/evaluation.md).
+
 ## Running the tests
 
 - PHP: run `tools/setup.sh` once (it downloads Node and php-wasm into `tools/`), then `tools/php tests/php/run.php`.
