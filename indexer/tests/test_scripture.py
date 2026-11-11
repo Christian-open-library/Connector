@@ -47,6 +47,9 @@ class ExtractRefs(unittest.TestCase):
         self.assertEqual(refs('Rom. 8. 28; v. 30', LIMITS), ['Romans 8:28'], '"v. 30" is a verse, not chapter 5')
         self.assertEqual(refs('Rom. 8. 28; 99. 1', LIMITS), ['Romans 8:28'], 'no chapter 99')
         self.assertEqual(refs('Rom. 8. 28; civil. 5', LIMITS), ['Romans 8:28'], 'a word, not a roman numeral')
+        # the American 1800s style: a period and a comma after the chapter
+        self.assertEqual(refs('John iii., 16; iv., 24', LIMITS), ['John 3:16', 'John 4:24'])
+        self.assertEqual(refs('Rom. viii., 28-30', LIMITS), ['Romans 8:28-30'])
         self.assertEqual(refs('Rom. viii. 28; IX. 5', LIMITS), ['Romans 8:28', 'Romans 9:5'])
 
     def test_unchanged_forms(self):

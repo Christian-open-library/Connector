@@ -125,7 +125,7 @@ REF_RE = re.compile(
     r'(?:(?P<ord>[123]|I{1,3}|i{1,3}|First|Second|Third|1st|2nd|3rd|1\.|2\.|3\.)\s*\.?\s*)?'
     r'(?P<book>' + _alias_re + r')(?![a-z])\.?\s*'
     r'(?P<ch>\d{1,3}|[ivxlcIVXLC]{1,7})(?![\d])'
-    r'(?:\s*[\.:,]\s*(?P<v1>\d{1,3})(?:\s*(?:[-–—]|to)\s*(?P<v2>\d{1,3}))?)?'
+    r'(?:\s*(?:\.,|[\.:,])\s*(?P<v1>\d{1,3})(?:\s*(?:[-–—]|to)\s*(?P<v2>\d{1,3}))?)?'
     r'(?![\d])', re.I)
 ORD_MAP = {'1': 0, 'i': 0, 'first': 0, '1st': 0, '1.': 0, '2': 1, 'ii': 1, 'second': 1, '2nd': 1, '2.': 1,
            '3': 2, 'iii': 2, 'third': 2, '3rd': 2, '3.': 2}
@@ -137,7 +137,7 @@ BOOK_AFTER_RE = re.compile(r'\s*\.?\s*(?:' + _alias_re + r')(?![a-z])', re.I)
 # another chapter and verse of the same book: "Rom. i. 32; ii. 1", "Rom. 8. 28; 9. 5" (not "v. 5" or
 # "c. 5", verse and chapter; roman numerals in their usual form only, up to cxcix)
 CONTINUATION_RE = re.compile(r'\s*;\s*(\d{1,3}|(?!(?:v|vv|c|l)\b)(?=[ivxlc])c?(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})'
-                             r'(?![a-z]))\s*[.:,]\s*(\d{1,3})(?:\s*(?:[-–—]|to)\s*(\d{1,3}))?(?![\d])', re.I)
+                             r'(?![a-z]))\s*(?:\.,|[.:,])\s*(\d{1,3})(?:\s*(?:[-–—]|to)\s*(\d{1,3}))?(?![\d])', re.I)
 
 
 def _checked(bid: int, ch: int, v1: int | None, v2: int | None, limits: dict | None):
