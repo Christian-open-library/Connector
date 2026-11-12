@@ -64,6 +64,9 @@ final class Format
                 $top .= "\n" . (in_array('partial', $matches, true) ? self::NO_CLOSE_MATCH : self::NO_MATCH);
             }
         }
+        if ($r->hits !== []) {
+            $top .= "\n" . self::CITE_RULE;
+        }
         $blocks = [];
         foreach ($r->hits as $i => $p) {
             $head = self::passageHeader($p, $r->offset + $i + 1) . self::matchLabel($p['match'] ?? null)
@@ -76,7 +79,7 @@ final class Format
                 $tail .= "\n" . self::contextLine($p['context_after'], 'after');
             }
             $tail .= self::scanLine($p['work']) . self::sourceLine($p['work'])
-                . self::pageLinkLine($p['work'], $p['page_start'] ?? null);
+                . self::pageLinkLine($p['work'], $p['page_start'] ?? null, $p['text']);
             if ($p['also'] !== []) {
                 $also = [];
                 foreach ($p['also'] as $a) {
@@ -93,6 +96,12 @@ final class Format
     public const CONTEXT_RULE = 'Each result shows the text just before and after it ("Before"/"After"), or the '
         . 'whole neighbouring passage when the result opens with an objection, a question or an answer. Quote the '
         . 'author\'s own position, not an objection he answers; read_passage gives more context by ref.';
+
+    /** Shown above every list of search results: how to quote and cite, so readers can check the answer. */
+    public const CITE_RULE = 'In your answer, quote only words shown in a passage here, never from memory, and put '
+        . 'each quotation in quotation marks. After each one give the author, title, year and page, and its link '
+        . '("Scan page", "Find on scan" or "Copied from") so the reader can open the source and check it. Say so '
+        . 'when you paraphrase, and still give the link.';
 
     /** Shown above search results that carry a match strength. */
     public const MATCH_RULE = 'Each result is marked with how well it matches: "exact words" (it holds the query '
@@ -112,7 +121,7 @@ final class Format
 
     /** Shown with every passage of a work whose text is uncorrected OCR. */
     public const SCAN_NOTE = 'Text: uncorrected OCR of a scanned book, so some letters and words are misread; '
-        . 'check the wording against the scan before quoting it.';
+        . 'give the scan link with any quotation so the reader can check the wording.';
 
     /** Words of a neighbouring passage shown before or after a result (the whole passage for a Q&A pair). */
     public const CONTEXT_WORDS = 45;
@@ -220,7 +229,7 @@ final class Format
                 $head .= ' · (requested passage)';
             }
             $blocks[] = ['head' => $head, 'text' => Text::inert($p['text']),
-                         'tail' => rtrim(self::notesLine($p) . self::pageLinkLine($work, $p['page_start'] ?? null))];
+                         'tail' => rtrim(self::notesLine($p) . self::pageLinkLine($work, $p['page_start'] ?? null, $p['text']))];
         }
         $foot = [];
         $foot[] = $previousId !== null ? "Earlier text: ref P$previousId" : 'This is the beginning of the work.';
@@ -334,7 +343,7 @@ final class Format
             $blocks[] = ['head' => self::passageHeader($p, $r->offset + $i + 1) . " · (cites {$p['cites']})"
                              . ($p['in_note'] ? ' (in a margin note)' : '') . self::authorLine($p['work']),
                          'text' => Text::inert($p['text']), 'tail' => self::notesLine($p) . self::scanLine($p['work']) . self::sourceLine($p['work'])
-                             . self::pageLinkLine($p['work'], $p['page_start'] ?? null)];
+                             . self::pageLinkLine($p['work'], $p['page_start'] ?? null, $p['text'])];
         }
         $notes = $r->notes;
         if ($last < $r->passages) {
@@ -556,7 +565,7 @@ final class Format
         $out .= "\nIn context: \"" . Text::inert(Text::oneLine($m['before'], 600)) . ($m['before'] !== '' ? ' ' : '')
             . '**' . $text . '**' . (preg_match('/^\s/u', $m['after']) === 1 ? ' ' : '')
             . Text::inert(Text::oneLine($m['after'], 600)) . '"'
-            . self::scanLine($w) . self::sourceLine($w) . self::pageLinkLine($w, $m['page']);
+            . self::scanLine($w) . self::sourceLine($w) . self::pageLinkLine($w, $m['page'], $m['text']);
         return $out;
     }
 
@@ -624,17 +633,51 @@ final class Format
     }
 
     /**
-     * "\nScan page: <url>" for a passage of a work copied from an Internet Archive scan whose first page is a plain
-     * printed page number: archive.org opens its viewer at the page with that printed label (".../page/100").
-     * Other sources have no page-level address.
+     * The link that lets a reader check a passage of a work copied from an Internet Archive scan:
+     * "\nScan page: <url>" when the passage starts on a plain printed page number (archive.org opens its viewer at
+     * the page with that label, ".../page/100"), else "\nFind on scan: <url>". Either way the address carries a
+     * quoted run of words from the passage ("?q=..."), so the viewer searches the scan for them and highlights them
+     * (the scan's own OCR is the text the library copied, so the words match). Other sources have no page-level
+     * address.
      */
-    private static function pageLinkLine(array $w, ?string $pageStart): string
+    private static function pageLinkLine(array $w, ?string $pageStart, string $text = ''): string
     {
         $id = self::archiveId((string) ($w['source_url'] ?? ''));
-        if ($id === null || $pageStart === null || !preg_match('/^[1-9][0-9]{0,4}$/', trim($pageStart))) {
+        if ($id === null) {
             return '';
         }
-        return "\nScan page: https://archive.org/details/$id/page/" . trim($pageStart) . '/mode/1up';
+        $phrase = self::scanPhrase($text);
+        $q = $phrase === '' ? '' : '?q=' . rawurlencode('"' . $phrase . '"');
+        if ($pageStart !== null && preg_match('/^[1-9][0-9]{0,4}$/', trim($pageStart))) {
+            return "\nScan page: https://archive.org/details/$id/page/" . trim($pageStart) . '/mode/1up' . $q;
+        }
+        return $q === '' ? '' : "\nFind on scan: https://archive.org/details/$id$q";
+    }
+
+    /**
+     * Five words in a row from a passage to search a scan for: the first run of five plain words (letters only, two
+     * or more each, punctuation around them ignored) that holds a word of six or more letters, so the run is
+     * distinctive. Page marks are skipped. "" when the passage has no such run (e.g. a table of figures).
+     */
+    public static function scanPhrase(string $text): string
+    {
+        $text = preg_replace('/\[p\. [^\]]{1,20}\]/u', ' ', Text::plain($text)) ?? '';
+        $run = [];
+        foreach (preg_split('/\s+/u', $text, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $tok) {
+            $core = trim($tok, ".,;:!?\"'()[]\u{2018}\u{2019}\u{201C}\u{201D}-");
+            if (preg_match('/^[A-Za-z]{2,}$/', $core) !== 1) {
+                $run = [];
+                continue;
+            }
+            $run[] = $core;
+            if (count($run) > 5) {
+                array_shift($run);
+            }
+            if (count($run) === 5 && max(array_map('strlen', $run)) >= 6) {
+                return implode(' ', $run);
+            }
+        }
+        return '';
     }
 
     /** The Internet Archive item name of a "https://archive.org/details/<id>" address, or null. */

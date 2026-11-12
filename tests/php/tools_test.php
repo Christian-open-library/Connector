@@ -132,6 +132,8 @@ function test_search_result_format(): void
     assert_same('Results 1-3 for "the chief end of man" (meaning + keyword search, re-ranked)', $lines[0]);
     assert_same(Format::CONTEXT_RULE, $lines[1], 'explains the context lines');
     assert_same(Format::MATCH_RULE, $lines[2], 'explains the match strengths');
+    assert_same(Format::CITE_RULE, $lines[3], 'says how to quote and cite');
+    array_splice($lines, 3, 1);
     assert_same('', $lines[3]);
     assert_same('[1] P10400003 · Théodore de Bèze, *A Brief Sum of the Christian Faith* · pp. 10–11 · A Short Catechism'
         . ' · Match: exact words', $lines[4], 'unknown year left out; pages as a range; the query is in it word for word');

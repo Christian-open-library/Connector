@@ -163,11 +163,32 @@ function test_scan_page_links_only_for_internet_archive_items_with_plain_page_nu
     assert_contains("Scan page: https://archive.org/details/churchofchristtr01bann/page/100/mode/1up",
         Format::readPassage($w, [$pass($w, '100')], 700000, null, null));
     assert_false(str_contains(Format::readPassage($w, [$pass($w, 'xii')], 700000, null, null), 'Scan page:'), 'roman page: no link');
-    assert_false(str_contains(Format::readPassage($w, [$pass($w, null)], 700000, null, null), 'Scan page:'), 'no page: no link');
+    assert_false(str_contains(Format::readPassage($w, [$pass($w, null)], 700000, null, null), 'Scan page:'), 'no page: no page link');
     $g = $mk('https://www.gutenberg.org/ebooks/99999', null);
     assert_false(str_contains(Format::readPassage($g, [$pass($g, '100')], 700000, null, null), 'Scan page:'), 'other sources: no link');
     assert_contains('Scan page: https://archive.org/details/churchofchristtr01bann/page/100/mode/1up',
         Format::search(new SearchResult('q', 'best', 'keyword search', [$pass($w, '100')], [])));
+}
+
+function test_scan_links_carry_a_phrase_to_find_the_passage(): void
+{
+    assert_same('The Church Session is charged', Format::scanPhrase('The Church Session is charged with maintaining the spiritual government of the congregation'),
+        'first run of five plain words holding a word of six letters or more');
+    assert_same('', Format::scanPhrase('12 34 a b ,, 1.5 9'), 'no plain words: no phrase');
+    assert_same('charged with maintaining the spiritual', Format::scanPhrase("[p. 195] 3,4 maint4ining; charged; with maintaining the spiritual government of"),
+        'page marks and junk break the run');
+    $w = ['id' => 7, 'author' => 'A', 'author_slug' => '', 'title' => 'T', 'year' => 1850,
+        'source_url' => 'https://archive.org/details/churchofchristtr01bann', 'full_title' => 'T', 'collection' => 'internet-archive',
+        'license' => '', 'type' => 'book', 'n_passages' => 1, 'page_first' => '1', 'page_last' => '9'];
+    $text = 'They are charged with maintaining the spiritual government of the congregation.';
+    $pass = static fn (?string $page): array => ['id' => 700000, 'work_id' => 7, 'seq' => 0, 'page_start' => $page,
+        'page_end' => $page, 'section' => '', 'text' => $text, 'notes' => [], 'work' => $w, 'also' => []];
+    $q = '?q=%22They%20are%20charged%20with%20maintaining%22';
+    assert_contains("Scan page: https://archive.org/details/churchofchristtr01bann/page/100/mode/1up$q",
+        Format::search(new SearchResult('q', 'best', 'keyword search', [$pass('100')], [])), 'page and phrase');
+    assert_contains("Find on scan: https://archive.org/details/churchofchristtr01bann$q",
+        Format::readPassage($w, [$pass(null)], 700000, null, null), 'no page: find the words instead');
+    assert_contains(Format::CITE_RULE, Format::search(new SearchResult('q', 'best', 'keyword search', [$pass('100')], [])));
 }
 
 function test_ocr_texts_say_so_with_every_passage(): void

@@ -9,6 +9,7 @@
 #   deploy/deploy-office.sh members              who may sign in (WorkOS users who are GitHub members; deploy/members.py),
 #                                                with the cost card's costs and gifts (deploy/funding.py)
 #   deploy/deploy-office.sh smoke | status | rollback
+#   deploy/deploy-office.sh errors               error lines from the last 72 h (needs deploy/office/log-errors.sh once)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # user@host of the deploy account (on the maintainer's machine: ~/.config/library-connector/office-host)
@@ -80,8 +81,8 @@ case "${1:-}" in
       | timeout --kill-after=30s 12m "${SSH[@]}" "$HOST" members ;;
   smoke)
     python3 -I deploy/smoke.py "$(url_file)" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("release",""))' "$DEPLOYED" 2>/dev/null || true)" ;;
-  status|rollback)
+  status|rollback|errors)
     "${SSH[@]}" "$HOST" "$1" ;;
   *)
-    sed -n '2,10p' "$0"; exit 1 ;;
+    sed -n '2,11p' "$0"; exit 1 ;;
 esac
