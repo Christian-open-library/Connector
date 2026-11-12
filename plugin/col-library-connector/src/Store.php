@@ -823,7 +823,7 @@ final class Store
                         $this->churchRecords[(int) $r['work_id']] = [
                             'denomination' => (string) $r['denomination'], 'tradition' => (string) $r['tradition'],
                             'doc_kind' => (string) $r['doc_kind'],
-                            'status' => $r['status'] === 'current' ? 'current' : 'historical'];
+                            'status' => in_array($r['status'], ['current', 'record'], true) ? $r['status'] : 'historical'];
                     }
                 }
             } catch (\PDOException $e) {

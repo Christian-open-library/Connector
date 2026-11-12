@@ -11,6 +11,8 @@ case "$c" in
     exec /usr/local/sbin/library-deploy "${args[@]}" ;;
   errors)
     exec sudo -n -u libsrv /usr/local/sbin/library-log-errors ;;   # error lines only (deploy/office/log-errors.sh)
+  usage)
+    exec sudo -n -u libsrv /usr/local/sbin/library-usage ;;   # counts and timings only (deploy/office/usage-report-2026-11-12.sh)
   *)
     echo "library-deploy-shell: not allowed" >&2
     exit 1 ;;

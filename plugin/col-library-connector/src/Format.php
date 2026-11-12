@@ -35,7 +35,12 @@ final class Format
         'docsouth' => 'Documenting the American South',
         'creeds-json' => 'Creeds and confessions',
         'contributed' => 'Contributed',
+        'licensed' => 'Used by permission (present-day church documents)',
     ];
+
+    /** Said with every work of the licensed shelf (collection "licensed"). */
+    public const PERMISSION_RULE = 'Used by permission of its owner (not public domain): quote only what answers the '
+        . 'question, never the whole document, credit the owner, and give the "Official copy" link.';
 
     // ---------------------------------------------------------------------------- search
 
@@ -216,7 +221,7 @@ final class Format
         if ($work['full_title'] !== '' && $work['full_title'] !== $work['title']) {
             $top .= "\nFull title: " . self::field($work['full_title'], 400);
         }
-        $where = array_filter([$work['source_url'] !== '' ? 'Copied from: ' . self::field($work['source_url'], 500) : '',
+        $where = array_filter([$work['source_url'] !== '' ? self::sourceWord($work) . ': ' . self::field($work['source_url'], 500) : '',
                                $work['license'] !== '' ? 'License: ' . self::field($work['license'], 200) : '']);
         $top .= self::authorLine($work) . self::churchLine($work);
         $top .= $where !== [] ? "\n" . implode(' · ', $where) : '';
@@ -272,7 +277,7 @@ final class Format
                 $lines[] = ltrim(self::churchLine($w));
             }
             if ($w['source_url'] !== '') {
-                $lines[] = 'Copied from: ' . self::field($w['source_url'], 500);
+                $lines[] = self::sourceWord($w) . ': ' . self::field($w['source_url'], 500);
             }
             $blocks[] = ['head' => '[' . ($i + 1) . '] work_id ' . $w['id'] . ' · ' . self::workLabel($w),
                          'text' => implode("\n", $lines), 'tail' => ''];
@@ -707,11 +712,17 @@ final class Format
             : "\nAuthor: " . self::field($w['author'], 200) . ' (' . self::field($note, 300) . ')';
     }
 
-    /** "\nChurch record: …" for a work from the library's church records (Churches::label), else "". */
+    /**
+     * "\nChurch record: …" for a work from the library's church records (Churches::label), and for a work used by
+     * permission the rule that comes with it; else "".
+     */
     private static function churchLine(array $w): string
     {
         $label = Churches::label($w);
-        return $label === '' ? '' : "\n" . self::field($label, 600);
+        if (self::isLicensed($w)) {
+            $label = ($label !== '' ? $label . ' ' : '') . self::PERMISSION_RULE;
+        }
+        return $label === '' ? '' : "\n" . self::field($label, 900);
     }
 
     /** "\nQuoting: ..." for a result that credits the words near the query's to another writer. */
@@ -734,7 +745,19 @@ final class Format
 
     private static function sourceLine(array $w): string
     {
-        return $w['source_url'] !== '' ? "\nCopied from: " . self::field($w['source_url'], 500) : '';
+        return $w['source_url'] !== '' ? "\n" . self::sourceWord($w) . ': ' . self::field($w['source_url'], 500) : '';
+    }
+
+    /** True for a work of the licensed shelf: a present-day document the library quotes by permission. */
+    public static function isLicensed(array $w): bool
+    {
+        return ($w['collection'] ?? '') === 'licensed';
+    }
+
+    /** "Official copy" for a work used by permission (its link is the owner's own copy), else "Copied from". */
+    private static function sourceWord(array $w): string
+    {
+        return self::isLicensed($w) ? 'Official copy' : 'Copied from';
     }
 
     /** "1 passage", "1,234 passages" */

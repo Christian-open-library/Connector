@@ -59,8 +59,9 @@ CREATE TABLE ivf(cluster INTEGER PRIMARY KEY, centroid BLOB NOT NULL,
 _worker: dict = {}
 
 
-def _init_worker(repo: str, lexicon_path: str):
-    _worker['repo'] = Path(repo)
+def _init_worker(repo: str, lexicon_path: str, licensed: str | None = None):
+    # Each work's files are read from its own root: the books repo, or the licensed shelf.
+    _worker['roots'] = {'': Path(repo), 'licensed': Path(licensed) if licensed else None}
     _worker['mod'] = Modernizer(load_lexicon(Path(lexicon_path)))
 
 
@@ -97,7 +98,10 @@ def _process_work(work: corpus.Work):
     mod.used.clear()
     rows = []
     dropped = 0
-    for p in corpus.chunk_work(_worker['repo'], work):
+    root = _worker['roots'].get(work.root)
+    if root is None:
+        raise ValueError(f'no root {work.root!r} for this work')
+    for p in corpus.chunk_work(root, work):
         plain = corpus.strip_markdown(pre_markdown(p.text))
         if work.ocr and mod.wordlike_share(plain) < OCR_MIN_WORDLIKE:
             dropped += 1
@@ -117,11 +121,19 @@ def _process_work(work: corpus.Work):
     return work, rows, dict(mod.used), dropped
 
 
-def add_church_bodies(db: sqlite3.Connection, repo: Path) -> None:
+def add_church_bodies(db: sqlite3.Connection, repo: Path, licensed: Path | None = None) -> None:
     """The church bodies and present-day names of the repo's Denominations/*.csv (lists as JSON), so searches
-    can be limited to one denomination and the bodies it descends from. A tag no work of this build carries is
-    kept: the connector simply finds nothing for it."""
+    can be limited to one denomination and the bodies it descends from, plus the bodies of the licensed shelf's
+    lineage.csv (same columns; a body the books repo already has is left to it). A tag no work of this build
+    carries is kept: the connector simply finds nothing for it."""
     bodies, names = corpus.load_church_bodies(repo)
+    if licensed is not None:
+        known = {b.name for b in bodies}
+        for b in corpus.load_church_bodies(licensed, 'lineage.csv', None)[0]:
+            if b.name in known:
+                corpus.warn(f'licensed lineage.csv: {b.name[:80]!r} is already a body of the books repo; kept that one')
+            else:
+                bodies.append(b)
     db.executemany('INSERT INTO church_bodies VALUES (?,?,?,?,?,?,?)', [
         (b.name, b.tradition, b.founded, b.ended, json.dumps(b.tags, ensure_ascii=False),
          json.dumps(b.aliases, ensure_ascii=False), int(b.verified)) for b in bodies])
@@ -147,8 +159,9 @@ def repo_commit(repo: Path) -> str:
 IDS_PATH = DATA / 'work_ids.json'
 
 
-def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3) -> Path:
-    """Builds library.sqlite in out_dir. The work-id map (new works get new ids) is written to
+def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3, licensed: Path | None = None) -> Path:
+    """Builds library.sqlite in out_dir, from the books repo and, when given, the licensed shelf (works used by
+    permission; corpus.licensed_works). The work-id map (new works get new ids) is written to
     out_dir/work_ids.json only; save_ids() makes it the persistent map once the build has passed
     its checks, so a failed or refused build never uses up ids."""
     t0 = time.time()
@@ -159,6 +172,12 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3) -
         # spread a sample across collections
         step = max(1, len(works) // limit_works)
         works = works[::step][:limit_works]
+    n_licensed = 0
+    if licensed is not None:
+        extra = corpus.licensed_works(licensed, ids)
+        n_licensed = len(extra)
+        works = sorted(works + extra, key=lambda w: w.id)
+        print(f'  licensed shelf: {n_licensed} works from {licensed}', flush=True)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     db_path = out_dir / 'library.sqlite'
@@ -177,7 +196,8 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3) -
     used_total: dict = {}
     n_pass = n_drop = 0
     lex_path = DATA / 'lexicon.tsv'
-    with mp.Pool(processes, initializer=_init_worker, initargs=(str(repo), str(lex_path))) as pool:
+    with mp.Pool(processes, initializer=_init_worker,
+                 initargs=(str(repo), str(lex_path), str(licensed) if licensed else None)) as pool:
         n_skipped = 0
         for i, (work, prow, used, dropped) in enumerate(pool.imap(_process, works, chunksize=2), 1):
             if prow is None:
@@ -217,7 +237,7 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3) -
     notes = [(name, *fields) for name, fields in sorted(corpus.load_authors(repo).items()) if name in held]
     db.executemany('INSERT INTO authors(name, dates, tradition, note) VALUES (?,?,?,?)', notes)
     print(f'  author notes: {len(notes)} of {len(held)} authors', flush=True)
-    add_church_bodies(db, repo)
+    add_church_bodies(db, repo, licensed)
     spell = {}
     for (variant, standard), n in used_total.items():
         if n >= 2 and variant != standard:
@@ -235,6 +255,8 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3) -
         'n_works': str(len(works) - n_skipped),
         'n_passages': str(n_pass),
         'n_dropped_ocr': str(n_drop),
+        'licensed_commit': repo_commit(licensed) if licensed is not None else '',
+        'n_licensed_works': str(n_licensed),
     }
     db.executemany('INSERT INTO meta(key, value) VALUES (?,?)', meta.items())
     db.commit()
@@ -260,6 +282,7 @@ def main(argv=None):
     ap.add_argument('--out', type=Path)
     ap.add_argument('--limit-works', type=int, default=0)
     ap.add_argument('--processes', type=int, default=3)
+    ap.add_argument('--licensed', type=Path, help='the licensed shelf (works used by permission)')
     args = ap.parse_args(argv)
     if not (DATA / 'lexicon.tsv').exists():
         sys.exit('data/lexicon.tsv missing: run python -m indexer.modernize --build-lexicon first')
@@ -267,7 +290,7 @@ def main(argv=None):
     out = args.out or DATA / 'build' / (stamp + ('-sample' if args.limit_works else ''))
     fresh = not out.exists()
     try:
-        build(args.repo, out, args.limit_works, args.processes)
+        build(args.repo, out, args.limit_works, args.processes, args.licensed)
     except BaseException:
         if fresh:
             shutil.rmtree(out, ignore_errors=True)

@@ -23,6 +23,9 @@ from .modernize import DATA, build_lexicon
 
 ROOT = Path(__file__).resolve().parent.parent
 REPO = Path.home() / 'library-work/books'
+# The licensed shelf: present-day documents used by permission (private repo mattm4444/licensed-library; never
+# copied into the books repo or anything library members can read). Built into the index beside the books.
+LICENSED = Path(os.environ.get('COL_LICENSED', '/mnt/photos/library-work/licensed'))
 BUILDS = DATA / 'build'
 DEPLOYED = DATA / 'deployed-office.json'   # written by deploy/deploy-office.sh
 
@@ -77,13 +80,24 @@ def verify(build_dir: Path) -> dict:
     return meta
 
 
-def build(sample: int, fake: bool, max_dollars: float, processes: int) -> Path:
+def licensed_root(required: bool) -> Path | None:
+    """The licensed shelf, or None (with a warning) when it is missing; the nightly requires it, so a build
+    never drops the shelf because a disk was not mounted."""
+    if (LICENSED / '.git').is_dir():
+        return LICENSED
+    if required:
+        raise SystemExit(f'the licensed shelf {LICENSED} is missing; nothing was built')
+    print(f'warning: no licensed shelf at {LICENSED}; building without it', file=sys.stderr, flush=True)
+    return None
+
+
+def build(sample: int, fake: bool, max_dollars: float, processes: int, licensed: Path | None = None) -> Path:
     if not (DATA / 'lexicon.tsv').exists():
         build_lexicon(REPO)
     stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
     out = BUILDS / (stamp + ('-sample' if sample else '') + ('-fake' if fake else ''))
     try:
-        build_db.build(REPO, out, sample, processes)
+        build_db.build(REPO, out, sample, processes, licensed)
         references.build(out, REPO, processes)
         if not fake:
             embed.run(out, dry_run=False, max_dollars=max_dollars, workers=4,
@@ -125,21 +139,24 @@ def nightly(max_dollars: float):
         print(su.stdout.strip().splitlines()[0][:200])
     # Build only reviewed main (THREAT-MODEL B4): the clone must be on main, tracking origin/main, with
     # nothing uncommitted or untracked, or nothing is built.
-    def git(*a):
-        return subprocess.run(['git', '-C', str(REPO), *a], capture_output=True, text=True).stdout.strip()
-    if (git('rev-parse', '--abbrev-ref', 'HEAD') != 'main'
-            or git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}') != 'origin/main'
-            or git('status', '--porcelain')):
-        raise SystemExit(f'{REPO} is not a clean main tracking origin/main; nothing was built')
-    subprocess.run(['git', '-C', str(REPO), 'pull', '--ff-only', '-q', 'origin', 'main'], check=True)
-    if git('rev-parse', 'HEAD') != git('rev-parse', 'origin/main'):
-        raise SystemExit(f'{REPO} HEAD is not origin/main after the pull; nothing was built')
-    now = head(REPO)
+    # The same for the licensed shelf (Matt's private repo).
+    licensed = licensed_root(required=True)
+    for repo in (REPO, licensed):
+        def git(*a):
+            return subprocess.run(['git', '-C', str(repo), *a], capture_output=True, text=True).stdout.strip()
+        if (git('rev-parse', '--abbrev-ref', 'HEAD') != 'main'
+                or git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}') != 'origin/main'
+                or git('status', '--porcelain')):
+            raise SystemExit(f'{repo} is not a clean main tracking origin/main; nothing was built')
+        subprocess.run(['git', '-C', str(repo), 'pull', '--ff-only', '-q', 'origin', 'main'], check=True)
+        if git('rev-parse', 'HEAD') != git('rev-parse', 'origin/main'):
+            raise SystemExit(f'{repo} HEAD is not origin/main after the pull; nothing was built')
+    now, now_licensed = head(REPO), head(licensed)
     last = json.loads(DEPLOYED.read_text()) if DEPLOYED.exists() else {}
-    if last.get('repo_commit') == now:
-        print(f'books repo unchanged at {now[:10]}; nothing to do')
+    if last.get('repo_commit') == now and last.get('licensed_commit') == now_licensed:
+        print(f'books repo unchanged at {now[:10]}, licensed shelf at {now_licensed[:10]}; nothing to do')
         return
-    out = build(sample=0, fake=False, max_dollars=max_dollars, processes=3)
+    out = build(sample=0, fake=False, max_dollars=max_dollars, processes=3, licensed=licensed)
     # The office server (mcp.christianopenlibrary.org).
     subprocess.run(['bash', str(ROOT / 'deploy/deploy-office.sh'), 'build', str(out)], check=True)
     # Again, so tonight's embedding cost is on the public cost card (deploy/funding.py) by morning.
@@ -160,13 +177,15 @@ def main(argv=None):
     b.add_argument('--fake', action='store_true')
     b.add_argument('--max-dollars', type=float, default=15.0)
     b.add_argument('--processes', type=int, default=3)
+    b.add_argument('--no-licensed', action='store_true', help='leave out the licensed shelf')
     nt = sub.add_parser('nightly')
     nt.add_argument('--max-dollars', type=float, default=3.0)
     v = sub.add_parser('verify')
     v.add_argument('build_dir', type=Path)
     args = ap.parse_args(argv)
     if args.cmd == 'build':
-        build(args.sample, args.fake, args.max_dollars, args.processes)
+        build(args.sample, args.fake, args.max_dollars, args.processes,
+              None if args.no_licensed else licensed_root(required=False))
     elif args.cmd == 'nightly':
         nightly(args.max_dollars)
     else:

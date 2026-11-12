@@ -1,3 +1,5 @@
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -200,3 +202,50 @@ class ChurchBodies(unittest.TestCase):
                 self.assertTrue(any(n.name == 'Presbyterian Church in America' for n in names))
                 return
         self.skipTest('no books checkout with Denominations/lineage.csv')
+
+
+class LicensedShelf(unittest.TestCase):
+    FRONT = ('---\ntitle: "{title}"\nauthor: "Some Church"\nyear: 2024\ndenomination: "Some Church"\n'
+             'tradition: Reformed\ndoc_kind: {kind}\nstatus: {status}\n{extra}---\n\n# {title}\n\n')
+
+    def shelf(self, d: Path) -> Path:
+        body = d / 'Body' / 'Acts'
+        body.mkdir(parents=True)
+        (d / 'README.md').write_text('# not a work\n')
+        lic = 'license: "© Some Church. Used by permission."\nsource: https://example.org/acts\n'
+        (body / 'Acts 2024.md').write_text(self.FRONT.format(title='Acts 2024', kind='acts', status='record', extra=lic)
+                                           + '## Parts\n')
+        (body / 'Acts 2024 — Part 001.md').write_text('# Acts 2024\n\n*by Some Church*\n\n[p. 1]\n'
+                                                      + 'Synod decided that the elders shall meet monthly. ' * 20
+                                                      + '\n\n[p. 2]\n' + 'Further words of the second page. ' * 30)
+        (body / 'Order.md').write_text(self.FRONT.format(title='Church Order', kind='church_order', status='current',
+                                                         extra=lic) + 'Article one of the order. ' * 20)
+        (body / 'No licence.md').write_text(self.FRONT.format(title='Loose', kind='acts', status='record', extra='')
+                                            + 'text ' * 20)
+        (body / '.hidden.md').write_text('x')
+        return d
+
+    def test_works_ids_and_fields(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self.shelf(Path(d))
+            ids = {'Some/book.md': 7}
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                works = {w.title: w for w in corpus.licensed_works(root, ids)}
+            self.assertEqual(sorted(works), ['Acts 2024', 'Church Order'])
+            self.assertIn('No licence.md', err.getvalue())
+            acts = works['Acts 2024']
+            self.assertEqual(acts.key, 'licensed/Body/Acts/Acts 2024.md')
+            self.assertEqual((acts.collection, acts.root, acts.status, acts.doc_kind, acts.year),
+                             ('licensed', 'licensed', 'record', 'acts', 2024))
+            self.assertEqual(acts.files, ['Body/Acts/Acts 2024 — Part 001.md'])
+            self.assertEqual(works['Church Order'].status, 'current')
+            self.assertGreater(min(w.id for w in works.values()), 7, 'new ids follow the books ids')
+            passages = corpus.chunk_work(root, acts)
+            self.assertEqual(passages[0].page_start, '1')
+            self.assertEqual(passages[-1].page_end, '2')
+            self.assertNotIn('[p. 1]\n', passages[0].text)
+
+    def test_status_is_never_historical_on_the_shelf(self):
+        got = corpus.church_fields({'denomination': 'X Church', 'tradition': 'Reformed', 'status': 'old'}, 'k',
+                                   licensed=True)
+        self.assertEqual(got['status'], 'record')

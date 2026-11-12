@@ -146,7 +146,7 @@ final class Filters
             }
             if ($church !== null) {
                 $msg .= ' ' . implode(' ', array_filter($church['notes'], static fn (string $n): bool
-                    => $n !== Churches::HISTORICAL_RULE));
+                    => !Churches::isRule($n)));
                 if ($church['ids'] !== []) {
                     $msg .= ' The church records alone match ' . count($church['ids']) . ' works: loosen the other filters.';
                 }

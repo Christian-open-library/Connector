@@ -229,3 +229,87 @@ function test_builds_without_the_church_tables(): void
     assert_false($r['isError'], 'searches without the filters are unchanged');
     assert_not_contains('Church record', Fixture\text_of($r));
 }
+
+/**
+ * A copy of the church build in which work 103 (Augustine) is a present-day document of the licensed shelf: the
+ * URCNA's current church order, used by permission (collection "licensed", status "current"), and work 104 an
+ * official record (status "record").
+ */
+function licensed_dir(): string
+{
+    static $dir = null;
+    if ($dir !== null) {
+        return $dir;
+    }
+    $src = church_dir();
+    $dir = col_tmpdir('licensed');
+    foreach (['library.sqlite', 'vectors.bin', 'ids.bin', 'manifest.json', 'config.php'] as $f) {
+        if (is_file("$src/$f")) {
+            copy("$src/$f", "$dir/$f");
+        }
+    }
+    $db = new \PDO("sqlite:$dir/library.sqlite");
+    $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+    $db->exec("UPDATE works SET collection = 'licensed', year = 2026, source_url = 'https://urcna.org/church-order',
+                   license = 'Used by permission' WHERE id IN (103, 104);
+               DELETE FROM church_records WHERE work_id IN (103, 104);
+               INSERT INTO church_records VALUES (103, 'United Reformed Churches in North America', 'Reformed',
+                   'church_order', 'current');
+               INSERT INTO church_records VALUES (104, 'United Reformed Churches in North America', 'Reformed', 'acts',
+                   'record');
+               INSERT INTO church_bodies VALUES ('United Reformed Churches in North America', 'Reformed', 1996, NULL,
+                   '[\"United Reformed Churches in North America\"]', '[\"URCNA\"]', 1);");
+    $db = null;
+    return $dir;
+}
+
+function licensed_call(string $tool, array $args): array
+{
+    return Tools::call($tool, $args, Fixture\context(['data_dir' => licensed_dir()]));
+}
+
+function test_licensed_labels_and_rules(): void
+{
+    $works = (new Store(licensed_dir()))->works([103, 104]);
+    assert_same('Church record: United Reformed Churches in North America (from 1996) · church order · CURRENT EDITION '
+        . '(2026), the body\'s own present text (later amendments may not be in the library yet; the official copy is '
+        . 'the authority).', Churches::label($works[103]));
+    assert_contains('· acts of synod or assembly · official record (2026) of the body. Later synods',
+        Churches::label($works[104]));
+
+    $r = licensed_call('search_library', ['query' => 'grace', 'denomination' => 'URCNA']);
+    $text = Fixture\text_of($r);
+    assert_false($r['isError'], $text);
+    assert_contains(Churches::PRESENT_RULE, $text);
+    assert_not_contains(Churches::HISTORICAL_RULE, $text);
+    assert_contains('Official copy: https://urcna.org/church-order', $text);
+    assert_contains('Used by permission of its owner (not public domain)', $text);
+    assert_not_contains('Copied from: https://urcna.org', $text);
+
+    $r = licensed_call('search_library', ['query' => 'grace', 'tradition' => 'Reformed']);
+    assert_false($r['isError'], Fixture\text_of($r));
+    $r = licensed_call('find_works', ['denomination' => 'Druids of Gaul']);
+    assert_contains('United Reformed Churches in North America (present-day documents, used by permission)',
+        Fixture\text_of($r));
+    // Mixed: a tradition filter over historical and present-day records.
+    $notes = (new Filters(tradition: 'Presbyterian'))->resolve(new Store(licensed_dir()))['notes'];
+    assert_true(in_array(Churches::HISTORICAL_RULE, $notes, true));
+}
+
+function test_licensed_read_passage_is_limited(): void
+{
+    $store = new Store(licensed_dir());
+    $range = $store->passageRange(103);
+    if ($range === null || $range[1] - $range[0] < 6) {
+        col_skip('the fixture work is too short');
+    }
+    $mid = $range[0] + 3;
+    $r = licensed_call('read_passage', ['ref' => "P$mid", 'before' => 10, 'after' => 10]);
+    $text = Fixture\text_of($r);
+    assert_false($r['isError'], $text);
+    assert_contains('used by permission, so read_passage returns at most 2 passages before and 3 after', $text);
+    assert_same(6, preg_match_all('/^P\d+\b/m', $text), 'the requested passage, 2 before and 3 after');
+    $r = call('read_passage', ['ref' => "P$mid", 'before' => 10, 'after' => 10]);
+    assert_not_contains('used by permission', Fixture\text_of($r), 'other works keep the full range');
+    assert_same(7, preg_match_all('/^P\d+\b/m', Fixture\text_of($r)));
+}

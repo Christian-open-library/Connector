@@ -44,6 +44,9 @@ final class Tools
     ];
     private const MAX_ID = 2_147_483_647;
     private const REF_MAX = 20;   // characters of a passage ref (the schema's maxLength)
+    /** read_passage context around a passage of a work used by permission (Format::isLicensed). */
+    private const LICENSED_BEFORE = 2;
+    private const LICENSED_AFTER = 3;
 
     /** @return list<array> tool objects: name, title, description, inputSchema, annotations */
     public static function definitions(): array
@@ -58,17 +61,18 @@ final class Tools
                     . 'American imprints), ecco-tcp (1700s editions), ccel-schaff (Church Fathers in Schaff\'s '
                     . 'translation), ccel (Christian Classics Ethereal Library), internet-archive (OCR scans), '
                     . 'project-gutenberg, standard-ebooks, docsouth (Documenting the American South), creeds-json '
-                    . '(creeds and confessions), contributed.'],
+                    . '(creeds and confessions), contributed, licensed (present-day church documents used by permission).'],
             'denomination' => ['type' => 'string', 'maxLength' => Churches::NAME_MAX,
-                'description' => 'Only the historical records (constitutions, books of order and discipline, digests, '
-                    . 'minutes, confessions, catechisms, service books) of one church body and the bodies it descends '
+                'description' => 'Only the records (constitutions, books of order and discipline, digests, '
+                    . 'minutes, confessions, catechisms, service books; for a few bodies, such as the URCNA, present-day '
+                    . 'documents used by permission) of one church body and the bodies it descends '
                     . 'from. Give the name or abbreviation the user uses, present-day or historical: e.g. "PCA" searches '
                     . 'the PCUS and the earlier bodies the PCA descends from; also "OPC", "PC(USA)", "Southern Baptist '
                     . 'Convention", "UMC", "Methodist Episcopal Church, South", "LCMS", "ELCA", "Episcopal Church", '
-                    . '"ACNA", "Catholic Church". The result says which bodies were searched. Use it whenever the user '
+                    . '"ACNA", "Catholic Church", "URCNA". The result says which bodies were searched. Use it whenever the user '
                     . 'names their own church or asks what a denomination taught or required.'],
             'tradition' => ['type' => 'string', 'enum' => Churches::TRADITIONS,
-                'description' => 'Only the historical church records of one tradition (all its bodies in the library).'],
+                'description' => 'Only the church records of one tradition (all its bodies in the library).'],
             'year_from' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 2100,
                 'description' => 'Only works published in or after this year. When a year filter is set, works '
                     . 'without a known year are left out (many modern reprints have none).'],
@@ -83,7 +87,7 @@ final class Tools
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
         . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
         . 'confessions, the historic records of more than 80 denominations (constitutions, books of order and discipline, digests, and General Assembly, convention and conference minutes, before 1931), verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
-        . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more). Finds passages by meaning and by keywords, then re-ranks them. Denominational documents are historical editions: give the edition and year, and say that the church body\'s current rules may differ and that it may since have merged or divided. When the user names their church or asks what a denomination taught or required, pass it as denomination (e.g. "PCA"): results then come only from that body\'s historical records and those of the bodies it descends from, each labeled "Church record". Old spellings are handled '
+        . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more). Finds passages by meaning and by keywords, then re-ranks them. Most denominational documents are historical editions (before 1931): give the edition and year, and say that the church body\'s current rules may differ and that it may since have merged or divided. A few present-day church documents are included by permission of their owners (at present the URCNA\'s Church Order, Acts of Synod and study committee reports): their results say "Used by permission" and whether each is the current edition or an official record of a past synod; quote only what answers the question, never a whole document, credit the body, and give the "Official copy" link. When the user names their church or asks what a denomination taught or required, pass it as denomination (e.g. "PCA"): results then come only from that body\'s records and those of the bodies it descends from, each labeled "Church record". Old spellings are handled '
                 . 'automatically: a search for "sin" also finds "ſinne". Returns verbatim passages, each with a ref '
                 . '(e.g. P1234500017; the digits before the last five are the work_id, here 12345), author, title, '
                 . 'year and page numbers where the source gives them, section, how well it matches (exact words, close, '
@@ -94,7 +98,7 @@ final class Tools
                 . 'the scan link with any quotation so the reader can check the wording. Where known, an "Author:" line gives the writer\'s dates and '
                 . 'tradition (for example Puritan, Roman Catholic, Lutheran, Church Father): the library holds writers '
                 . 'who disagree with one another, so say who a writer was when it bears on the question, and do not present '
-                . 'one writer as speaking for another tradition. The text is the library\'s own copy (the Christian Open Library collection, github.com/Christian-open-library, updated nightly). Each work\'s "Copied from" link is where that copy was transcribed or scanned from, for checking against the original. Passage text keeps the original spelling; "[p. 23]" '
+                . 'one writer as speaking for another tradition. The text is the library\'s own copy (the Christian Open Library collection, github.com/Christian-open-library, updated nightly). Each work\'s "Copied from" link is where that copy was transcribed or scanned from, for checking against the original (for a document used by permission, its "Official copy" link). Passage text keeps the original spelling; "[p. 23]" '
                 . 'inside text marks where page 23 begins. Each result also shows the end of the passage before it and the '
                 . 'start of the one after (the whole neighbour when it opens with an objection, question or answer), so a '
                 . 'quote can be checked in context without another call. Results come from different works (at most 2 '
@@ -162,7 +166,7 @@ final class Tools
             'title' => 'Find works in the Christian Open Library',
             'description' => 'List works (books, sermons, treatises, confessions) in the Christian Open Library by '
                 . 'words from their title or author\'s name, and/or by author, collection, denomination (a church '
-                . 'body\'s historical records, e.g. "PCA" or "Methodist Episcopal Church"), tradition and years. Old spellings '
+                . 'body\'s records, e.g. "PCA", "URCNA" or "Methodist Episcopal Church"), tradition and years. Old spellings '
                 . 'in titles are matched automatically ("sin" finds "Sinne"). Returns for each work its work_id, '
                 . 'author, title, full title, year, type, collection, number of passages, page range, source link '
                 . 'and license. Work ids are the same numbers as in passage refs (P1234500017 is in work 12345). '
@@ -489,6 +493,18 @@ final class Tools
                 $notes[] = "Page $shownLabel begins inside this passage or the page markers do not show its exact start.";
             }
         }
+        $work = $store->work($passage['work_id']);
+        if ($work === null) {
+            throw new StoreException('passage without a work row');
+        }
+        if (Format::isLicensed($work) && ($before > self::LICENSED_BEFORE || $after > self::LICENSED_AFTER)) {
+            // Used by permission on the terms that the library quotes it, not that it hands out whole documents.
+            $before = min($before, self::LICENSED_BEFORE);
+            $after = min($after, self::LICENSED_AFTER);
+            $notes[] = 'This document is used by permission, so read_passage returns at most ' . self::LICENSED_BEFORE
+                . ' passages before and ' . self::LICENSED_AFTER . ' after the requested one. Quote what answers the '
+                . 'question and give the "Official copy" link for the rest.';
+        }
         $around = $store->neighbours($passage['work_id'], $passage['seq'], $before, $after);
         $earlier = $around['before'];
         $later = $around['after'];
@@ -501,10 +517,6 @@ final class Tools
         if (count($later) > $after) {
             $nextId = $later[$after]['id'];
             $later = array_slice($later, 0, $after);
-        }
-        $work = $store->work($passage['work_id']);
-        if ($work === null) {
-            throw new StoreException('passage without a work row');
         }
         $text = Format::readPassage($work, array_merge($earlier, [$passage], $later), $passage['id'],
             $previousId, $nextId, $notes);

@@ -46,7 +46,11 @@ final class Churches
 
     /** Kinds of document that are a body's own records (the rest: histories and other writings filed with them). */
     public const OFFICIAL_KINDS = ['constitution', 'discipline', 'canons', 'digest', 'minutes', 'journal', 'report',
-        'confession', 'catechism', 'liturgy', 'manual'];
+        'confession', 'catechism', 'liturgy', 'manual', 'church_order', 'acts', 'procedure', 'study_report'];
+
+    /** How a kind of document is named in a label ("church_order" -> "church order", "acts" -> "acts of synod or assembly"). */
+    private const KIND_WORDS = ['church_order' => 'church order', 'study_report' => 'study committee report',
+        'acts' => 'acts of synod or assembly', 'procedure' => 'rules of procedure'];
 
     public const NAME_MAX = 120;   // characters of a denomination filter
 
@@ -211,16 +215,40 @@ final class Churches
             $ids[$id] = true;
         }
         $notes = $match['notes'] ?? [];
+        $present = 0;     // records used by permission (current editions and official records), the rest historical
+        foreach (array_keys($ids) as $id) {
+            if (in_array($records[$id]['status'], ['current', 'record'], true)) {
+                $present++;
+            }
+        }
         if ($outside + $undated > 0) {
             $notes[] = ($outside + $undated) . ' record' . ($outside + $undated === 1 ? '' : 's')
                 . ' of those bodies from outside the years in that line of descent ' . ($outside + $undated === 1 ? 'was' : 'were')
                 . ' left out' . ($undated > 0 ? " ($undated without a known year)" : '') . '.';
         }
         if ($ids !== []) {
-            $notes[] = self::HISTORICAL_RULE;
+            $notes[] = $present === 0 ? self::HISTORICAL_RULE : ($present === count($ids) ? self::PRESENT_RULE : self::MIXED_RULE);
         }
         return ['ids' => $ids, 'notes' => $notes];
     }
+
+    /** True for the rule lines that allowed() adds to the notes. */
+    public static function isRule(string $note): bool
+    {
+        return in_array($note, [self::HISTORICAL_RULE, self::PRESENT_RULE, self::MIXED_RULE], true);
+    }
+
+    /** Shown when every record searched is a present-day document used by permission. */
+    public const PRESENT_RULE = 'These church records are present-day documents used by permission: say whether each '
+        . 'is the current edition or the record of a past synod or assembly (whose decisions later ones may have changed), '
+        . 'give the body and year, quote only what answers the question, and give the "Official copy" link.';
+
+    /** Shown when the records searched are partly historical editions and partly present-day documents. */
+    public const MIXED_RULE = 'Each church record\'s label says what it is. "Current edition" and "official record" '
+        . 'are present-day documents used by permission: give the body and year, quote only what answers the question, '
+        . 'and give the "Official copy" link; an official record of a past synod or assembly may since have been changed. '
+        . '"Historical edition" records are from before 1931: say that the body\'s current rules may differ and that it '
+        . 'may since have merged or divided, and never present them as a present-day church\'s current position.';
 
     /** Shown in the notes of a search limited to church records. */
     public const HISTORICAL_RULE = 'These church records are historical editions (before 1931): in the answer give '
@@ -262,15 +290,24 @@ final class Churches
         }
         $who = Text::oneLine($c['denomination'] . $years, 300);
         $year = $w['year'] !== null ? ' of ' . $w['year'] : '';
+        $kind = self::KIND_WORDS[$c['doc_kind']] ?? $c['doc_kind'];
+        if (Format::isLicensed($w)) {
+            $year = $w['year'] !== null ? ' (' . $w['year'] . ')' : '';
+            return $c['status'] === 'current'
+                ? "Church record: $who · $kind · CURRENT EDITION$year, the body's own present text (later amendments "
+                    . 'may not be in the library yet; the official copy is the authority).'
+                : "Church record: $who · $kind · official record$year of the body. Later synods or assemblies may have "
+                    . 'changed what it decided: for the rules in force, see the body\'s current church order.';
+        }
         if ($c['status'] === 'current') {
-            return "Church record: $who · {$c['doc_kind']} · edition$year, marked current in the library; the body may "
+            return "Church record: $who · $kind · edition$year, marked current in the library; the body may "
                 . 'have amended it since.';
         }
         if (!in_array($c['doc_kind'], self::OFFICIAL_KINDS, true)) {
-            return "Filed with the church records of: $who · {$c['doc_kind']} · historical$year; not a statement of "
+            return "Filed with the church records of: $who · $kind · historical$year; not a statement of "
                 . 'that body\'s current position.';
         }
-        return "Church record: $who · {$c['doc_kind']} · historical edition$year. Its current rules may differ, and "
+        return "Church record: $who · $kind · historical edition$year. Its current rules may differ, and "
             . 'the body may since have merged or divided.';
     }
 
@@ -295,7 +332,7 @@ final class Churches
             : "$echo (the $bare)";
         $as = array_values(array_filter($direct, static fn (string $b): bool => $b !== $name));
         $lead = $own
-            ? "Denomination \"$label\": its own historical records" . ($as !== [] ? ' (as the ' . self::bodyList($as, $bodies) . ')' : '')
+            ? "Denomination \"$label\": its own records" . ($as !== [] ? ' (as the ' . self::bodyList($as, $bodies) . ')' : '')
                 . ($parts !== [] ? ' and those of its parent bodies: ' : '')
             : "Denomination \"$label\": the library has no records of that body itself; searching the historical records "
                 . 'of its parent bodies: ';
@@ -321,9 +358,16 @@ final class Churches
     /** The error for a denomination the library does not know: what it has, by tradition, and the names it knows. */
     private static function unknown(Store $store, string $echo): string
     {
+        $present = [];    // bodies with present-day documents used by permission
+        $bodyOf = $store->churchBodyOfTag();
+        foreach ($store->churchRecords() as $r) {
+            if (in_array($r['status'], ['current', 'record'], true) && isset($bodyOf[$r['denomination']])) {
+                $present[$bodyOf[$r['denomination']]] = true;
+            }
+        }
         $by = [];
         foreach ($store->churchBodies() as $name => $b) {
-            $by[$b['tradition']][] = $name;
+            $by[$b['tradition']][] = $name . (isset($present[$name]) ? ' (present-day documents, used by permission)' : '');
         }
         $lines = [];
         foreach (self::TRADITIONS as $t) {
@@ -337,8 +381,8 @@ final class Churches
             $known[] = $abbr !== [] ? $abbr[0] : $name;
         }
         return "NOT FOUND: the library has no church records filed under \"$echo\". Do not search other bodies' records "
-            . 'as if they were this one\'s. The church bodies whose records the library holds (historical editions, '
-            . "before 1931), by tradition:\n" . implode("\n", $lines)
+            . 'as if they were this one\'s. The church bodies whose records the library holds (historical editions '
+            . "before 1931, and present-day documents used by permission where a body is marked so), by tradition:\n" . implode("\n", $lines)
             . ($known !== [] ? "\nPresent-day names it also understands (searching the bodies they descend from): "
                 . implode(', ', array_unique($known)) . '.' : '')
             . "\nSearch again with one of these as denomination, or use the tradition filter, or search without a "

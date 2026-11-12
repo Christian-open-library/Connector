@@ -62,7 +62,14 @@ COLLECTION_LABELS = {
     'docsouth': 'Documenting the American South',
     'creeds-json': 'Creeds and confessions',
     'contributed': 'Contributed',
+    'licensed': 'Used by permission (present-day church documents)',
 }
+
+# The licensed shelf (a private repo beside the books repo): present-day documents the library may quote by
+# permission of their owners, never published as files. Its works' keys start with LICENSED_PREFIX, so they
+# can never collide with a books-repo path, and their collection is 'licensed'.
+LICENSED_PREFIX = 'licensed/'
+LICENSED_PAGE_RE = re.compile(r'^\[p\. ([0-9]{1,5}|[ivxlcdm]{1,10})\][ \t]*$', re.M)
 
 
 @dataclass
@@ -86,7 +93,8 @@ class Work:
     denomination: str = ''   # the body's name at the time, as in the front matter
     church_tradition: str = ''   # one of CHURCH_TRADITIONS
     doc_kind: str = ''       # one of DOC_KINDS
-    status: str = ''         # 'historical' or 'current'
+    status: str = ''         # 'historical' or 'current' (books); 'current' or 'record' (licensed shelf)
+    root: str = ''           # '' = the books repo; 'licensed' = the licensed shelf (files are relative to it)
 
 
 @dataclass
@@ -375,11 +383,12 @@ def _work(repo: Path, row: dict, key: str, work_id: int) -> Work:
     )
 
 
-def church_fields(meta: dict, key: str) -> dict:
+def church_fields(meta: dict, key: str, licensed: bool = False) -> dict:
     """denomination, church_tradition, doc_kind and status from a work's front matter ({} when it has no
     `denomination:`). An unknown tradition leaves the work out of the church records (warning); an unknown
     doc_kind becomes 'other'; anything but status 'current' is 'historical', so an edition is never shown as
-    current by mistake."""
+    current by mistake. On the licensed shelf (present-day documents) the status is 'current' or else 'record'
+    (the official record of a past assembly, e.g. the Acts of Synod 2007)."""
     denomination = clean_meta(meta.get('denomination') or '')[:CHURCH_NAME_MAX]
     if not denomination:
         return {}
@@ -390,7 +399,68 @@ def church_fields(meta: dict, key: str) -> dict:
     kind = clean_meta(meta.get('doc_kind') or '').lower()
     return dict(denomination=denomination, church_tradition=tradition,
                 doc_kind=kind if kind in DOC_KINDS else 'other',
-                status='current' if clean_meta(meta.get('status') or '').lower() == 'current' else 'historical')
+                status='current' if clean_meta(meta.get('status') or '').lower() == 'current'
+                else 'record' if licensed else 'historical')
+
+
+# ---------------------------------------------------------------- the licensed shelf
+
+def licensed_files(root: Path) -> list[str]:
+    """Main files of the licensed shelf, relative to its root: every .md file inside a body folder
+    (`<Body>/.../*.md`), except part files of a main file beside them, hidden files and folders, and files at the
+    top (README.md). Only safe files (repo_file) are listed."""
+    out = []
+    base = root.resolve()
+    for dirpath, dirnames, filenames in os.walk(base):          # does not follow symlinked folders
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith('.'))
+        here = Path(dirpath)
+        if here == base:
+            continue
+        names = set(filenames)
+        for name in sorted(filenames):
+            if not name.endswith('.md') or name.startswith('.'):
+                continue
+            m = PART_RE.match(name)
+            if m and m.group('stem') + '.md' in names:
+                continue
+            rel = (here.relative_to(base) / name).as_posix()
+            try:
+                repo_file(root, rel)
+            except (UnsafePath, OSError) as e:
+                warn(f'licensed file refused ({e}): {rel!r}')
+                continue
+            out.append(rel)
+    return out
+
+
+def licensed_works(root: Path, ids: dict[str, int]) -> list[Work]:
+    """The works of the licensed shelf (new ones get new ids in `ids`). A work needs `license:` (the owner's
+    notice and permission) and an https `source:` (the official copy, shown with every passage), or it is left
+    out with a warning."""
+    rels = licensed_files(root)
+    assign_work_ids([{'File': LICENSED_PREFIX + rel} for rel in rels], ids)
+    works = []
+    for rel in rels:
+        key = LICENSED_PREFIX + rel
+        if key not in ids:
+            continue
+        try:
+            meta, _ = split_frontmatter(read_repo_text(root, rel))
+        except Exception as e:      # UnicodeDecodeError, OSError, ...
+            warn(f'licensed work skipped ({type(e).__name__}: {str(e)[:200]!r}): {key!r}')
+            continue
+        m = lambda k: clean_meta(meta.get(k) or '')       # noqa: E731
+        if not m('license') or not re.fullmatch(r'https://[^\s<>"]+', m('source')) or not m('title'):
+            warn(f'licensed work left out (it needs title:, license: and an https source:): {key!r}')
+            continue
+        parts = part_files(root, rel)
+        works.append(Work(
+            id=ids[key], key=key, author=m('author'), author_slug=m('author'), title=m('title'),
+            full_title=m('full_title') or m('title'), year=_year(meta.get('year')) or _year(meta.get('date')),
+            type=m('type') or 'book', collection='licensed', license=m('license'), source_url=m('source'),
+            tcp_id='', series='', ocr=False, files=parts if parts else [rel], root='licensed',
+            **church_fields(meta, key, licensed=True)))
+    return works
 
 
 # ---------------------------------------------------------------- church bodies (Denominations/*.csv)
@@ -399,7 +469,9 @@ CHURCH_TRADITIONS = frozenset((
     'Presbyterian', 'Reformed', 'Baptist', 'Methodist', 'Holiness', 'Pentecostal', 'Anglican', 'Lutheran',
     'Catholic', 'Orthodox', 'Congregational', 'Anabaptist', 'Quaker', 'Restorationist', 'Moravian', 'Other'))
 DOC_KINDS = frozenset(('constitution', 'discipline', 'canons', 'digest', 'minutes', 'journal', 'report',
-                       'confession', 'catechism', 'liturgy', 'manual', 'history', 'other'))
+                       'confession', 'catechism', 'liturgy', 'manual', 'history', 'other',
+                       # used by the licensed shelf
+                       'church_order', 'acts', 'procedure', 'study_report'))
 # Body names and aliases reach an AI with search results: letters, digits, spaces and plain punctuation only.
 CHURCH_TEXT_RE = re.compile(r"[\w .,:'’()&/–-]+")
 CHURCH_NAME_MAX = 160
@@ -447,13 +519,14 @@ def _csv_rows(repo: Path, rel: str) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
-def load_church_bodies(repo: Path) -> tuple[list[ChurchBody], list[ChurchName]]:
+def load_church_bodies(repo: Path, lineage: str = 'Denominations/lineage.csv',
+                       present: str | None = 'Denominations/present-day.csv') -> tuple[list[ChurchBody], list[ChurchName]]:
     """The books repo's Denominations/lineage.csv (bodies whose records the library holds) and
     Denominations/present-day.csv (present-day names and their ancestors). ([], []) without the files.
     Rows with an unknown tradition, a malformed field or text outside CHURCH_TEXT_RE are left out with a
     warning, and so are ancestors that are not bodies."""
     bodies: dict[str, ChurchBody] = {}
-    for row in _csv_rows(repo, 'Denominations/lineage.csv'):
+    for row in _csv_rows(repo, lineage):
         name = clean_meta(row.get('body') or '')
         tradition = clean_meta(row.get('tradition') or '')
         tags = _church_list(row.get('tags') or '', 'tags')
@@ -465,7 +538,7 @@ def load_church_bodies(repo: Path) -> tuple[list[ChurchBody], list[ChurchName]]:
         bodies[name] = ChurchBody(name, tradition, _year(row.get('founded')), _year(row.get('ended')), tags,
                                   aliases, clean_meta(row.get('verified') or '').lower() == 'yes')
     names: dict[str, ChurchName] = {}
-    for row in _csv_rows(repo, 'Denominations/present-day.csv'):
+    for row in (_csv_rows(repo, present) if present else []):
         name = clean_meta(row.get('name') or '')
         tradition = clean_meta(row.get('tradition') or '')
         aliases = _church_list(row.get('aliases') or '', 'aliases')
@@ -888,6 +961,9 @@ def chunk_work(repo: Path, work: Work) -> list[Passage]:
         flush()
         cur_part = part_no
         text = read_repo_text(repo, rel)
+        if work.root == 'licensed':
+            # The licensed shelf marks PDF pages with a line "[p. 12]"; make them page markers.
+            text = LICENSED_PAGE_RE.sub(r'<!-- p. \1 -->', text)
         blocks, file_notes = file_blocks(text, is_part=len(work.files) > 1)
         for kind, value in blocks:
             if kind == 'page':

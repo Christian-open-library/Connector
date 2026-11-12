@@ -204,7 +204,7 @@ class Robustness(Repo):
         work = corpus.Work(id=3, key='C/bad.md', author='', author_slug='', title='', full_title='', year=None,
                            type='book', collection='c', license='', source_url='', tcp_id='', series='', ocr=False,
                            files=['C/bad.md', 'C/../../private/canary.md'])
-        build_db._worker.update(repo=self.repo, mod=build_db.Modernizer({}))
+        build_db._worker.update(roots={'': self.repo, 'licensed': None}, mod=build_db.Modernizer({}))
         w, rows, err, _ = build_db._process(work)
         self.assertIsNone(rows)
         self.assertIn('UnsafePath', err)

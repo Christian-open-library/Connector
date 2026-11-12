@@ -122,7 +122,7 @@ if [ -s "$STAGE/url_key" ] && [ -s "$STAGE/voyage.key" ]; then
   printf "    'data_dir'        => '/srv/library/live/current',\n    'state_dir'       => '/srv/library/state',\n"
   printf "    'links_file'      => '/srv/library/links/links.json',\n"
   printf "    'max_calls_per_minute'      => 600,\n    'max_calls_per_day'         => 100000,\n"
-  printf "    'max_voyage_tokens_per_day' => 15000000,\n"
+  printf "    'max_voyage_tokens_per_day' => 40000000,\n"
   printf "    'log_level'       => 'info',\n    'log_queries'     => false,\n];\n"
 } > "$WORK/config.php"
 php8.5 -l "$WORK/config.php" >/dev/null || fail "config.php"
@@ -177,7 +177,7 @@ undo "systemctl try-reload-or-restart ssh.service"
 systemctl try-reload-or-restart ssh.service | cat
 
 echo "== 5. Health checks"
-for f in library-health library-explain; do put 755 root:root "$P/$f" "/usr/local/sbin/$f"; done
+for f in library-health library-budget library-explain; do put 755 root:root "$P/$f" "/usr/local/sbin/$f"; done
 } </dev/null
 
 echo "== 6. Cloudflare tunnel"
