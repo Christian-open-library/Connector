@@ -380,7 +380,7 @@ final class Search
         }
         // Breadth: at most PER_WORK passages from one work, unless the search is limited to a few works.
         $perWork = $workIds !== null && count($workIds) <= self::FEW_WORKS ? PHP_INT_MAX : self::PER_WORK;
-        $hits = self::withMatch(self::collapse($cands, $limit, $perWork), $phrase);
+        $hits = $this->withRetellings(self::withMatch(self::collapse($cands, $limit, $perWork), $phrase), $tokens);
         $sides = array_keys(array_filter(['meaning' => $vectorRan, 'keyword' => $keywordRan]));
         $method = ($sides !== [] ? implode(' + ', $sides) : 'no') . ' search' . ($reranked ? ', re-ranked' : '');
         return new SearchResult($query, 'best', $method, $hits, array_values(array_unique($notes)));
@@ -398,6 +398,32 @@ final class Search
             $score = $h['score'] ?? null;
             $hits[$i]['match'] = isset($exact[$h['id']]) ? 'exact'
                 : ($score === null ? null : self::matchWord((float) $score));
+        }
+        return $hits;
+    }
+
+    /**
+     * Marks an exact or close hit that credits the words near the query's to another writer the library
+     * holds ("as Augustine tells us"): 'retold' => [name, said]. Right topic is not right source.
+     * @param list<array> $hits  @param list<string> $tokens  @return list<array>
+     */
+    private function withRetellings(array $hits, array $tokens): array
+    {
+        $stems = Quote::queryStems($tokens);
+        if (count($stems) < 2) {
+            return $hits;
+        }
+        $writers = null;
+        $modern = fn (array $words): array => Text::modernTokens($words, $this->store->spellings($words));
+        foreach ($hits as $i => $h) {
+            if (!in_array($h['match'] ?? null, ['exact', 'close'], true)) {
+                continue;
+            }
+            $writers ??= Quote::writerKeys($this->store->allWorks());
+            $r = Quote::retold((string) $h['text'], $h['work'], $writers, $stems, $modern);
+            if ($r !== null) {
+                $hits[$i]['retold'] = $r;
+            }
         }
         return $hits;
     }

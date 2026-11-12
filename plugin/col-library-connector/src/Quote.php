@@ -946,6 +946,125 @@ final class Quote
         return $groups;
     }
 
+    // ---------------------------------------------------------------------------- retellings
+
+    /** Words for what a writer put in writing ("Augustine tells us", "so Baxter wrote"). */
+    private const CREDIT_VERB = '(?:tells us|telleth us|told us|writes|writeth|wrote|observes|observed|relates|'
+        . 'remarks|records|confesses|writes of himself|writeth of himselfe?)';
+    /** Words for speech, which count only after "as" or "so": a history's "Latimer said" is the history's own record. */
+    private const SAYING_VERB = '(?:says|saith|sayes|said|speaks|speaketh)';
+    /** A writer's name: optional title, up to two more capitalized words, then the name word. */
+    private const CREDIT_NAME = "(?:(?:Saint|St\\.?|S\\.|Mr\\.?|Dr\\.?|Bishop|Father|good|old|holy|blessed|learned|godly)\\s+)?"
+        . "(?:[A-Z][\\p{L}'’]+\\s+){0,2}?([A-Z][\\p{L}'’]+)";
+    /** Old spellings of writers often quoted, in looseKey form => the name the library files them under. */
+    public const WRITER_ALIASES = ['austin' => 'augustine', 'austine' => 'augustine', 'austen' => 'augustine',
+        'augustin' => 'augustine', 'hierom' => 'jerome', 'hierome' => 'jerome', 'chrysostome' => 'chrysostom',
+        'calvine' => 'calvin', 'caluin' => 'calvin'];
+    /** Writer name words too common as plain words or Bible names to count. */
+    private const WRITER_SKIP = ['love', 'hall', 'wood', 'more', 'good', 'hope', 'king', 'young', 'law', 'paul',
+        'peter', 'john', 'james', 'david', 'moses', 'christ', 'jesus', 'lord', 'god', 'solomon', 'isaiah', 'jude',
+        'church', 'council', 'synod', 'assembly', 'conference', 'convention', 'presbyterian', 'baptist', 'methodist',
+        'reformed', 'lutheran', 'episcopal', 'congregational', 'united', 'general', 'american', 'evangelical'];
+
+    /**
+     * Name words of the library's writers (looseKey form, last word of each name, 4+ letters) => name.
+     * @param iterable<array> $works  @return array<string,string>
+     */
+    public static function writerKeys(iterable $works): array
+    {
+        $keys = [];
+        foreach ($works as $w) {
+            $name = Text::looseKey((string) $w['author']);
+            $of = strpos($name, ' of ');
+            $parts = explode(' ', $of !== false ? substr($name, 0, $of) : $name);   // "Bernard of Clairvaux"
+            $last = (string) end($parts);
+            if (strlen($last) >= 4 && !in_array($last, self::WRITER_SKIP, true)) {
+                $keys[$last] ??= (string) $w['author'];
+            }
+        }
+        return $keys;
+    }
+
+    /**
+     * The writer a passage credits words to, near words of the query, or null: "as Augustine says",
+     * "Baxter wrote", "the story of Augustine", or a "— Name" credit line ending a paragraph. The
+     * named writer must be one the library holds and not the passage's own author, and at least two of
+     * the query's words (in modern spelling) must be in the quotation that follows the credit, or within
+     * about 250-300 characters of it when none does, so a
+     * passage that quotes Ambrose on another point is not flagged.
+     * @param array<string,string> $writers  writerKeys()  @param array<string,true> $queryStems  5-letter stems
+     * @param callable(list<string>):list<string> $modern  normalized words => modern spellings
+     * @return array{name:string,said:string}|null
+     */
+    public static function retold(string $text, array $work, array $writers, array $queryStems, callable $modern): ?array
+    {
+        if ($writers === [] || count($queryStems) < 2) {
+            return null;
+        }
+        $plain = Text::plain(Text::fold($text));
+        $n = self::CREDIT_NAME;
+        $v = self::CREDIT_VERB;
+        $say = '(?:' . $v . '|' . self::SAYING_VERB . ')';
+        $patterns = ["/\\b$n,?\\s+$v\\b/u", "/\\b(?:[Aa]s|[Ss]o|[Tt]hus)\\s+$n,?\\s+$say\\b/u",
+            "/\\b(?:[Aa]s|[Ss]o|[Tt]hus)\\s+$say\\s+$n\\b/u", "/\\b(?:story|life|conversion|confessions?) of $n\\b/u",
+            "/(?:—|--)\\s*$n\\b[^—]{0,60}$/um"];
+        $own = self::authorWords((string) $work['author'] . ' ' . str_replace('-', ' ', (string) ($work['author_slug'] ?? '')));
+        $best = null;
+        foreach ($patterns as $re) {
+            if (preg_match_all($re, $plain, $m, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) === false) {
+                continue;
+            }
+            foreach ($m as $hit) {
+                $word = Text::looseKey($hit[1][0]);
+                $key = self::WRITER_ALIASES[$word] ?? $word;
+                if (!isset($writers[$key]) || in_array($key, $own, true) || in_array($word, $own, true)) {
+                    continue;
+                }
+                $at = $hit[0][1];
+                $end = $at + strlen($hit[0][0]);
+                // A quotation right after the credit ("Brooks observes, \"It is sweeter ...\"") is what is
+                // credited; otherwise the text around it.
+                if (preg_match('/^[\\s,:;]{0,3}[“"‘]([^”"’]{10,500})/u', substr($plain, $end, 520), $qm) === 1) {
+                    $zone = $qm[1];
+                } else {
+                    $from = max(0, $at - 250);
+                    $zone = substr($plain, $from, $end + 300 - $from);
+                }
+                $words = $modern(Text::words(Text::normalize($zone)));
+                $seen = [];
+                foreach ($words as $w) {
+                    $stem = substr($w, 0, 5);
+                    if (isset($queryStems[$stem])) {
+                        $seen[$stem] = true;
+                    }
+                }
+                if (count($seen) >= 2 && ($best === null || count($seen) > $best['n'])) {
+                    $best = ['n' => count($seen), 'said' => Text::oneLine(trim($hit[0][0], " —-,"), 60),
+                        'name' => $key !== $word ? ucfirst($key) : Text::oneLine($hit[1][0], 40)];
+                }
+            }
+        }
+        return $best === null ? null : ['name' => $best['name'], 'said' => $best['said']];
+    }
+
+    /** Query words too general to tie a credit to the question. */
+    private const VAGUE_WORDS = ['have', 'like', 'ones', 'said', 'says', 'tell', 'told', 'what', 'which',
+        'when', 'where', 'there', 'their', 'than', 'then', 'them', 'they', 'this', 'that', 'with', 'from', 'into',
+        'more', 'most', 'some', 'such', 'only', 'also', 'very', 'will', 'would', 'should', 'could', 'book', 'puritan',
+        'writer', 'author', 'quote', 'quotation', 'wrote', 'write', 'explained', 'able', 'better'];
+
+    /** 5-letter stems of a query's content words (4+ letters, no stopwords). @param list<string> $tokens  @return array<string,true> */
+    public static function queryStems(array $tokens): array
+    {
+        $stems = [];
+        foreach ($tokens as $t) {
+            if (strlen($t) >= 4 && !Text::isStopword($t) && !in_array($t, self::VAGUE_WORDS, true)) {
+                $stems[substr($t, 0, 5)] = true;
+            }
+        }
+        return $stems;
+    }
+
     // ------------------------------------------------------------------------------- authors
 
     /** Name words of the credited author to look for (words of 3+ letters; all words if none is). @return list<string> */

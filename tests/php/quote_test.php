@@ -206,3 +206,46 @@ function test_numbers_in_the_quotation(): void
     assert_contains('Quote check:', $text);
     ok(['quote' => 'In the year 1668 he wrote 2 books of 300 pages']);
 }
+
+function test_retellings(): void
+{
+    $writers = Quote::writerKeys([['author' => 'Augustine'], ['author' => 'Ambrose'], ['author' => 'Thomas Brooks'],
+        ['author' => 'Thomas a Kempis'], ['author' => 'Bernard of Clairvaux'], ['author' => 'Church of Scotland'],
+        ['author' => 'Christopher Love']]);
+    assert_true(isset($writers['augustine'], $writers['bernard'], $writers['kempis']));
+    assert_false(isset($writers['church']) || isset($writers['love']) || isset($writers['scotland']));
+    $same = static fn (array $w): array => $w;
+    $stems = static fn (string $q): array => Quote::queryStems(\ColLibrary\Text::words(\ColLibrary\Text::normalize($q)));
+    $spurgeon = ['author' => 'Charles Spurgeon', 'author_slug' => 'charles-spurgeon'];
+    $tolle = $stems('Who heard a child singing a refrain that told him to pick up the book, opened Paul\'s letter, and was converted?');
+
+    $r = Quote::retold('Remember the story of Augustine. To the grief of his dear mother he had been leading a wicked '
+        . 'life; but as he walked in the garden he heard a little child say, "Take! Read!"', $spurgeon, $writers, $tolle, $same);
+    assert_same('Augustine', $r['name'] ?? null, 'the story of Augustine');
+    $r = Quote::retold('Saint Auſtine in his troubles of ſpirit, thought he heard a voice ſaying, Take up and read; '
+        . 'he took up his Bible and was converted. So ſaith Saint Auſtine.', ['author' => 'Obadiah Sedgwick',
+        'author_slug' => ''], $writers, $tolle, $same);
+    assert_same('Augustine', $r['name'] ?? null, 'old spelling Austine');
+    // The credit is about something else: no flag.
+    assert_same(null, Quote::retold('Whereupon good Mr. Brooks observes, "It is sweeter than that which drops." '
+        . str_repeat('Some words are plain and need no study at all. ', 12) . 'Some words of the Lord are as nuts that '
+        . 'need cracking.', $spurgeon, $writers, $stems('the hardest texts are like nuts: the ones hardest to crack '
+        . 'have the sweetest kernels'), $same));
+    // A quotation after the credit is what is credited: Brooks on honey, not on nuts (q62, Only a Prayer-Meeting).
+    assert_same(null, Quote::retold('Whereupon good Mr. Brooks observes, "It is sweeter than that which drops '
+        . 'immediately and naturally, the purest and the sweetest honey." There are texts of Scripture which are '
+        . 'exceedingly sweet. Some words are as nuts that need cracking.', $spurgeon, $writers + ['latimer' => 'Hugh Latimer'],
+        $stems('the hardest texts are like nuts: the ones hardest to crack have the sweetest kernels'), $same));
+    // A history recording what a martyr said is the source, not a retelling.
+    assert_same(null, Quote::retold('Then Mr. Latimer said, Be of good comfort, Master Ridley, and play the man: we shall '
+        . 'this day light such a candle in England as shall never be put out.', ['author' => 'John Foxe', 'author_slug' => ''],
+        $writers + ['latimer' => 'Hugh Latimer'], $stems('A martyr at the stake told his fellow prisoner they would light a '
+        . 'candle in England never to be put out'), $same));
+    // The work's own author, and a writer the library does not hold.
+    assert_same(null, Quote::retold('Saint Augustine writes of himself that he heard a child and was converted.',
+        ['author' => 'Augustine', 'author_slug' => 'augustine'], $writers, $tolle, $same));
+    assert_same(null, Quote::retold('As Plato says, he heard a child and was converted.', $spurgeon, $writers, $tolle, $same));
+    // A '— Name' credit line in a compilation.
+    $r = Quote::retold("He heard the child, took the book, and was converted. — Bernard.", $spurgeon, $writers, $tolle, $same);
+    assert_same('Bernard', $r['name'] ?? null, 'credit line');
+}

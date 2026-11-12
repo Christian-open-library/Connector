@@ -74,7 +74,7 @@ final class Format
             if (isset($p['context_before'])) {
                 $head .= "\n" . self::contextLine($p['context_before'], 'before');
             }
-            $tail = self::notesLine($p);
+            $tail = self::notesLine($p) . self::retoldLine($p);
             if (isset($p['context_after'])) {
                 $tail .= "\n" . self::contextLine($p['context_after'], 'after');
             }
@@ -105,8 +105,9 @@ final class Format
 
     /** Shown above search results that carry a match strength. */
     public const MATCH_RULE = 'Each result is marked with how well it matches: "exact words" (it holds the query '
-        . 'word for word), "close" (it is about what was asked), "partial" (related) or "loose" (only loosely '
-        . 'related; do not rely on it).';
+        . 'word for word), "close" (it is about what was asked, which does not prove it is the source), "partial" '
+        . '(related) or "loose" (only loosely related; do not rely on it). For who said or wrote something, use '
+        . 'check_quote or search again with author set.';
 
     /** Shown when no result is an exact or close match but some are partial. */
     public const NO_CLOSE_MATCH = 'NO CLOSE MATCH: these passages are related to the query but may not answer it. '
@@ -711,6 +712,18 @@ final class Format
     {
         $label = Churches::label($w);
         return $label === '' ? '' : "\n" . self::field($label, 600);
+    }
+
+    /** "\nQuoting: ..." for a result that credits the words near the query's to another writer. */
+    private static function retoldLine(array $p): string
+    {
+        if (!isset($p['retold'])) {
+            return '';
+        }
+        $name = self::field($p['retold']['name'], 80);
+        return "\nQuoting: this passage credits it to another writer (\"" . self::field($p['retold']['said'], 60)
+            . "\"), so it may quote or retell $name rather than be the source; to find who said it, use "
+            . "check_quote or search with author \"$name\".";
     }
 
     /** " · Match: close" for a search result that carries a match strength, else "". */

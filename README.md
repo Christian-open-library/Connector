@@ -24,7 +24,7 @@ Six read-only tools:
 
 Each result comes with the text around it, so the AI can quote an author's own position rather than an objection he goes on to answer. If a quotation appears word for word in the library, it ranks first.
 
-Each search result is marked as an exact, close, partial or loose match. When the library has nothing close to what was asked, or no such work, the result says NOT FOUND or NO CLOSE MATCH and tells the AI not to quote from memory. Passages from scanned books are marked as uncorrected OCR.
+Each search result is marked as an exact, close, partial or loose match; "close" means on the subject, not proof of the source, so for who said something the AI is told to use the quote checker. A result that credits its words to another writer ("as Augustine tells us") says so. When the library has nothing close to what was asked, or no such work, the result says NOT FOUND or NO CLOSE MATCH and tells the AI not to quote from memory. Passages from scanned books are marked as uncorrected OCR.
 
 ## How it works
 
