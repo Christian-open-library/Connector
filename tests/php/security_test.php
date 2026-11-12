@@ -179,7 +179,8 @@ function test_ocr_texts_say_so_with_every_passage(): void
     $pass = static fn (array $w): array => ['id' => 700000, 'work_id' => 7, 'seq' => 0, 'page_start' => '100',
         'page_end' => '100', 'section' => '', 'text' => 'Body', 'notes' => [], 'work' => $w, 'also' => []];
     $scan = $mk(1);
-    $keyed = $mk(0);
+    $keyed = ['collection' => 'ccel', 'source_url' => 'https://ccel.org/ccel/a/t'] + $mk(0);
+    $unmarked = $mk(0);   // an Internet Archive text without the catalog's OCR mark is still a scan
     $found = Format::search(new SearchResult('q', 'best', 'keyword search', [$pass($scan)], []));
     assert_contains("Body\n" . Format::SCAN_NOTE . "\nCopied from: https://archive.org/details/churchofchristtr01bann\nScan page:", $found,
         'under the text, before the source');
@@ -187,6 +188,7 @@ function test_ocr_texts_say_so_with_every_passage(): void
     assert_false(str_contains(Format::search(new SearchResult('q', 'best', 'keyword search', [$pass($keyed)], [])), 'OCR'),
         'a keyed text carries no note');
     assert_false(str_contains(Format::readPassage($keyed, [$pass($keyed)], 700000, null, null), 'uncorrected OCR'));
+    assert_contains(Format::SCAN_NOTE, Format::search(new SearchResult('q', 'best', 'keyword search', [$pass($unmarked)], [])));
 }
 
 function test_an_author_note_is_withheld_from_a_work_older_than_the_author(): void

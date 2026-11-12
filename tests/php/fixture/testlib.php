@@ -18,7 +18,7 @@ use ColLibrary\Store;
 use ColLibrary\Voyage;
 
 col_src('Context', 'Config', 'Log', 'RateLimit', 'Text', 'Store', 'Voyage', 'Search', 'Format', 'Tools', 'Bible',
-    'Citations', 'Dictionary');
+    'Citations', 'Dictionary', 'Quote');
 
 const DIR = __DIR__;
 const REALMODE_DIR = __DIR__ . '/realmode';   // same build, meta embed_fake = 0

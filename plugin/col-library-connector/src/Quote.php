@@ -87,6 +87,8 @@ final class Quote
     private Search $search;
     /** @var array<string,int> word => id, so the alignment compares integers */
     private array $ids = [];
+    /** @var list<string> id => word (array keys turn "1668" into an integer, so the words are kept here) */
+    private array $words = [];
     public array $trace = [];
 
     public function __construct(
@@ -256,6 +258,7 @@ final class Quote
         // 3. Matches, best per work
         $byWork = [];
         foreach ($results as $id => $r) {
+            $r = $this->allowMisreads($r, $q, $docs[$id]);
             if (!$this->qualifies($r, $n)) {
                 continue;
             }
@@ -341,7 +344,11 @@ final class Quote
             }
         }
         foreach ($out as $i => $t) {
-            $out[$i]['id'] = $this->ids[$t['w']] ??= count($this->ids);
+            if (!isset($this->ids[$t['w']])) {
+                $this->ids[$t['w']] = count($this->words);
+                $this->words[] = (string) $t['w'];
+            }
+            $out[$i]['id'] = $this->ids[$t['w']];
         }
         return $out;
     }
@@ -397,7 +404,7 @@ final class Quote
     /** @param list<int> $ids @return list<int> the ids of words that are not stopwords (all of them if none is) */
     private function contentIds(array $ids): array
     {
-        $words = array_flip($this->ids);
+        $words = $this->words;
         $content = array_values(array_filter($ids, static fn (int $id): bool => !Text::isStopword($words[$id])));
         return $content !== [] ? $content : $ids;
     }
@@ -636,6 +643,53 @@ final class Quote
         return ['edits' => $edits, 'same' => $same, 'from' => $from ?? 0, 'to' => $to ?? 0, 'ops' => $ops];
     }
 
+    /**
+     * In a work that is uncorrected OCR of a scan, a changed word that differs from the quotation's by a letter
+     * or so ("liis" for "his", "tbe" for "the") is most likely a misreading of the scan, not a different word:
+     * it counts as kept, and 'misread' says how many there were.
+     */
+    private function allowMisreads(array $r, array $q, array $doc): array
+    {
+        $r['misread'] = 0;
+        if (!self::fromScan($doc['passages'][0]['work']) || $r['edits'] === 0) {
+            return $r;
+        }
+        $words = $this->words;
+        foreach ($r['ops'] as $op) {
+            if ($op[0] === '~' && self::misread($words[$q['ids'][$op[1]]], $words[$doc['tokens'][$op[2]]['id']])) {
+                $r['misread']++;
+            }
+        }
+        $r['edits'] -= $r['misread'];
+        $r['same'] += $r['misread'];
+        return $r;
+    }
+
+    /**
+     * True for a work whose text is OCR of a scan: marked so, or from the Internet Archive (whose texts all come
+     * from scans; 56 older ones lack the mark in the catalog).
+     */
+    public static function fromScan(array $work): bool
+    {
+        return (int) ($work['ocr'] ?? 0) === 1 || ($work['collection'] ?? '') === 'internet-archive';
+    }
+
+    /** True when two words differ only as an OCR misreading would: one letter in 3+, two in 7+. */
+    public static function misread(string $a, string $b): bool
+    {
+        // Letters a scan is often misread as: "liis" for "his", "rn" for "m", "cl" for "d", "ii" for "u".
+        $fold = static fn (string $w): string => strtr($w, ['li' => 'h', 'rn' => 'm', 'cl' => 'd', 'ii' => 'u', 'vv' => 'w',
+                                                         '1' => 'l', '0' => 'o']);
+        if ($fold($a) === $fold($b)) {
+            return true;
+        }
+        $short = min(mb_strlen($a), mb_strlen($b));
+        if ($short < 3 || abs(mb_strlen($a) - mb_strlen($b)) > 1) {
+            return false;
+        }
+        return levenshtein($a, $b) <= ($short >= 7 ? 2 : 1);
+    }
+
     /** Close enough to call it the same quotation. */
     private function qualifies(array $r, int $n): bool
     {
@@ -706,6 +760,7 @@ final class Quote
             'page' => $first['page'],
             'page_end' => $last['page'],
             'edits' => $r['edits'],
+            'misread' => $r['misread'] ?? 0,
             'same' => $r['same'],
             'words' => count($q['ids']),
             'text' => $words,

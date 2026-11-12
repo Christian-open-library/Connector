@@ -463,6 +463,12 @@ final class Format
         } elseif ($r->verdict === QuoteResult::EXACT) {
             $lines[] = "FOUND WORD FOR WORD: these words are in $where. Spelling, capitals and punctuation were not "
                 . 'compared; quote the library\'s wording below.';
+            if ($p['misread'] > 0) {
+                $lines[] = 'SCAN: ' . self::plural($p['misread'], 'word') . ' in this book\'s text '
+                    . ($p['misread'] === 1 ? 'differs' : 'differ') . ' from the quotation by a letter or two (marked in '
+                    . 'bold below). The text is uncorrected OCR of a scan, so these are most likely misread letters, not '
+                    . 'different words: check the scan before quoting.';
+            }
         } else {
             $lines[] = "FOUND, BUT WORDED DIFFERENTLY: the closest wording is in $where: {$p['same']} of the {$p['words']} "
                 . 'words given are there in the same order. The real wording and the one given are shown side by side '
@@ -478,6 +484,10 @@ final class Format
             array_unshift($lines, 'COMMON WORDING: ' . number_format($r->phraseWorks) . ' or more works in the library use these exact '
                 . 'words, so they may be a Bible verse, a proverb or a stock phrase; the earliest holder is not necessarily '
                 . 'their author.');
+        }
+        if ($p['edits'] > 0 && Quote::fromScan($p['work'])) {
+            $lines[] = 'SCAN: this book\'s text is uncorrected OCR of a scan, so some of the differences may be misread '
+                . 'letters rather than different words: check the scan before saying the wording differs.';
         }
         if ($credit !== null && $r->verdict !== QuoteResult::OTHER_AUTHOR) {
             $lines[] = "NOTE: in this work a credit line, \"— $credit\", follows the words: the writer is quoting $credit.";
@@ -519,7 +529,11 @@ final class Format
 
     private static function quoteMatchLabel(array $m): string
     {
-        return $m['edits'] === 0 ? 'word for word' : "{$m['same']} of {$m['words']} words the same";
+        if ($m['edits'] === 0) {
+            return 'word for word' . ($m['misread'] > 0 ? ' (apart from ' . self::plural($m['misread'], 'likely misreading')
+                . ' in the scan)' : '');
+        }
+        return "{$m['same']} of {$m['words']} words the same";
     }
 
     /** The passage block: header, author, the wording (side by side when it differs), context, links. */
@@ -529,7 +543,7 @@ final class Format
         $w = $m['work'];
         $out = self::passageHeader($p) . ' · Match: ' . self::quoteMatchLabel($m) . self::authorLine($w);
         $text = Text::inert(Text::oneLine(Text::plain($m['text']), 3000));
-        if ($m['edits'] === 0) {
+        if ($m['edits'] === 0 && $m['misread'] === 0) {
             $out .= "\nThe library's wording: \"" . $text . '"';
         } else {
             $out .= "\nCompared word by word (spelling, capitals and punctuation ignored; differing words in bold):"
@@ -632,7 +646,7 @@ final class Format
     /** "\nText: uncorrected OCR…" for a work whose text is OCR of a scan, else "". */
     private static function scanLine(array $w): string
     {
-        return (int) ($w['ocr'] ?? 0) === 1 ? "\n" . self::SCAN_NOTE : '';
+        return Quote::fromScan($w) ? "\n" . self::SCAN_NOTE : '';
     }
 
     /**

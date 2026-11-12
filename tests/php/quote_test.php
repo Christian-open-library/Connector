@@ -188,3 +188,21 @@ function test_author_words(): void
     assert_false(Quote::byAuthor(['author' => 'John Owen', 'author_slug' => 'john-owen'], ['john', 'flavel']));
     assert_false(Quote::byAuthor(['author' => 'John Owen', 'author_slug' => 'john-owen'], []));
 }
+
+function test_ocr_misreadings(): void
+{
+    assert_true(Quote::misread('his', 'liis'));
+    assert_true(Quote::misread('the', 'tbe'));
+    assert_true(Quote::misread('righteousness', 'rigbteousness'));
+    assert_false(Quote::misread('sin', 'sun') === false, 'one letter in a short word is allowed');
+    assert_false(Quote::misread('of', 'or'), 'two-letter words are never treated as misread');
+    assert_false(Quote::misread('rests', 'repose'));
+    assert_false(Quote::misread('heart', 'hearts') === false);
+}
+
+function test_numbers_in_the_quotation(): void
+{
+    $text = ok(['quote' => 'Rom. 8. 13. If ye through the Spirit doe mortifie the deeds of the body', 'author' => 'Owen']);
+    assert_contains('Quote check:', $text);
+    ok(['quote' => 'In the year 1668 he wrote 2 books of 300 pages']);
+}
