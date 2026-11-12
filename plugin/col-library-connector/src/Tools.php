@@ -67,11 +67,11 @@ final class Tools
         $search = [
             'name' => 'search_library',
             'title' => 'Search the Christian Open Library',
-            'description' => 'Search the Christian Open Library: about 4,600 public-domain works, mostly Christian, from the '
+            'description' => 'Search the Christian Open Library: about 4,800 public-domain works, mostly Christian, from the '
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
         . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
-        . 'confessions, verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
-        . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more). Finds passages by meaning and by keywords, then re-ranks them. Old spellings are handled '
+        . 'confessions, the historic records of more than 80 denominations (constitutions, books of order and discipline, digests, and General Assembly, convention and conference minutes, before 1931), verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
+        . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more). Finds passages by meaning and by keywords, then re-ranks them. Denominational documents are historical editions: give the edition and year, and say that the church body\'s current rules may differ and that it may since have merged or divided. Old spellings are handled '
                 . 'automatically: a search for "sin" also finds "ſinne". Returns verbatim passages, each with a ref '
                 . '(e.g. P1234500017; the digits before the last five are the work_id, here 12345), author, title, '
                 . 'year and page numbers where the source gives them, section, how well it matches (exact words, close, '

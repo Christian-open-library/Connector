@@ -80,13 +80,13 @@ final class Mcp
     public const UNSUPPORTED_VERSION = -32022;
 
     /** initialize / server/discover instructions (claude.ai currently does not pass them to the model). */
-    public const INSTRUCTIONS = 'The Christian Open Library: about 4,600 public-domain works, mostly Christian, from the '
+    public const INSTRUCTIONS = 'The Christian Open Library: about 4,800 public-domain works, mostly Christian, from the '
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
         . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
-        . 'confessions, verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
+        . 'confessions, the historic records of more than 80 denominations (constitutions, books of order and discipline, digests, and General Assembly, convention and conference minutes, before 1931), verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
         . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more), '
         . 'with Bible translations and older Bible and theological dictionaries. Search with several phrasings for '
-        . 'broad questions, and use exact mode for a remembered phrase. To check whether an author really wrote a '
+        . 'broad questions, and use exact mode for a remembered phrase. Denominational documents are historical editions: give the edition and year, and say that the church body\'s current rules may differ and that it may since have merged or divided. To check whether an author really wrote a '
         . 'quotation, use check_quote, and report its answer (found word for word, worded differently, by someone '
         . 'else, or not found) as it gives it. Quote only words that appear verbatim in '
         . 'a returned passage (spelling may be modernized if every word stays; say so), and cite author, title, and the year and page when the result gives them, giving the "Scan page" or "Copied from" link when a result has one so the reader can check the page. When a result begins NOT FOUND or NO CLOSE MATCH, tell the user the library does not have it or may not have it; never quote or cite something from memory as though it came from the library. Passages marked as uncorrected OCR may have misread words: check them against the scan. Where known, an "Author:" line gives the writer\'s dates and tradition: the library holds writers who disagree with one another, so say who a writer was when it bears on the question. "[p. 23]" inside passage text marks where '
