@@ -46,6 +46,12 @@ CREATE VIRTUAL TABLE works_fts USING fts5(
 CREATE TABLE spelling(variant TEXT PRIMARY KEY, standard TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE authors(name TEXT PRIMARY KEY, dates TEXT NOT NULL, tradition TEXT NOT NULL,
                      note TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE church_records(work_id INTEGER PRIMARY KEY, denomination TEXT NOT NULL, tradition TEXT NOT NULL,
+                            doc_kind TEXT NOT NULL, status TEXT NOT NULL);
+CREATE TABLE church_bodies(name TEXT PRIMARY KEY, tradition TEXT NOT NULL, founded INTEGER, ended INTEGER,
+                           tags TEXT NOT NULL, aliases TEXT NOT NULL, verified INTEGER NOT NULL) WITHOUT ROWID;
+CREATE TABLE church_names(name TEXT PRIMARY KEY, aliases TEXT NOT NULL, tradition TEXT NOT NULL,
+                          ancestors TEXT NOT NULL, verified INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE ivf(cluster INTEGER PRIMARY KEY, centroid BLOB NOT NULL,
                  start INTEGER NOT NULL, count INTEGER NOT NULL);
 """
@@ -111,6 +117,25 @@ def _process_work(work: corpus.Work):
     return work, rows, dict(mod.used), dropped
 
 
+def add_church_bodies(db: sqlite3.Connection, repo: Path) -> None:
+    """The church bodies and present-day names of the repo's Denominations/*.csv (lists as JSON), so searches
+    can be limited to one denomination and the bodies it descends from. A tag no work of this build carries is
+    kept: the connector simply finds nothing for it."""
+    bodies, names = corpus.load_church_bodies(repo)
+    db.executemany('INSERT INTO church_bodies VALUES (?,?,?,?,?,?,?)', [
+        (b.name, b.tradition, b.founded, b.ended, json.dumps(b.tags, ensure_ascii=False),
+         json.dumps(b.aliases, ensure_ascii=False), int(b.verified)) for b in bodies])
+    db.executemany('INSERT INTO church_names VALUES (?,?,?,?,?)', [
+        (n.name, json.dumps(n.aliases, ensure_ascii=False), n.tradition,
+         json.dumps([list(a) for a in n.ancestors], ensure_ascii=False), int(n.verified)) for n in names])
+    tagged = {row[0] for row in db.execute('SELECT DISTINCT denomination FROM church_records')}
+    owned = {t for b in bodies for t in b.tags}
+    for t in sorted(tagged - owned):
+        corpus.warn(f'denomination {t[:80]!r} is in no body of Denominations/lineage.csv')
+    n_records = db.execute('SELECT count(*) FROM church_records').fetchone()[0]
+    print(f'  church records: {n_records} works, {len(bodies)} bodies, {len(names)} present-day names', flush=True)
+
+
 def repo_commit(repo: Path) -> str:
     try:
         return subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True,
@@ -173,6 +198,9 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3) -
                 work.id, work.key, work.author, work.author_slug, work.title, work.full_title,
                 work.year, work.type, work.collection, work.license, work.source_url, work.tcp_id,
                 work.series, int(work.ocr), len(prow), first_page, last_page))
+            if work.denomination:
+                db.execute('INSERT INTO church_records VALUES (?,?,?,?,?)', (
+                    work.id, work.denomination, work.church_tradition, work.doc_kind, work.status))
             for k, v in used.items():
                 used_total[k] = used_total.get(k, 0) + v
             n_pass += len(prow)
@@ -189,6 +217,7 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3) -
     notes = [(name, *fields) for name, fields in sorted(corpus.load_authors(repo).items()) if name in held]
     db.executemany('INSERT INTO authors(name, dates, tradition, note) VALUES (?,?,?,?)', notes)
     print(f'  author notes: {len(notes)} of {len(held)} authors', flush=True)
+    add_church_bodies(db, repo)
     spell = {}
     for (variant, standard), n in used_total.items():
         if n >= 2 and variant != standard:

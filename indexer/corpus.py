@@ -82,6 +82,11 @@ class Work:
     series: str
     ocr: bool
     files: list[str] = field(default_factory=list)   # repo-relative text files, in order
+    # Church records (books CONTRIBUTING.md, Denominations/<tradition>/<body>/): '' for other works.
+    denomination: str = ''   # the body's name at the time, as in the front matter
+    church_tradition: str = ''   # one of CHURCH_TRADITIONS
+    doc_kind: str = ''       # one of DOC_KINDS
+    status: str = ''         # 'historical' or 'current'
 
 
 @dataclass
@@ -366,7 +371,121 @@ def _work(repo: Path, row: dict, key: str, work_id: int) -> Work:
         series=m('series'),
         ocr=bool(meta.get('ocr')),
         files=parts if parts else [key],
+        **church_fields(meta, key),
     )
+
+
+def church_fields(meta: dict, key: str) -> dict:
+    """denomination, church_tradition, doc_kind and status from a work's front matter ({} when it has no
+    `denomination:`). An unknown tradition leaves the work out of the church records (warning); an unknown
+    doc_kind becomes 'other'; anything but status 'current' is 'historical', so an edition is never shown as
+    current by mistake."""
+    denomination = clean_meta(meta.get('denomination') or '')[:CHURCH_NAME_MAX]
+    if not denomination:
+        return {}
+    tradition = clean_meta(meta.get('tradition') or '')
+    if tradition not in CHURCH_TRADITIONS or not CHURCH_TEXT_RE.fullmatch(denomination):
+        warn(f'church record left out (tradition {tradition[:40]!r} or the denomination is not accepted): {key!r}')
+        return {}
+    kind = clean_meta(meta.get('doc_kind') or '').lower()
+    return dict(denomination=denomination, church_tradition=tradition,
+                doc_kind=kind if kind in DOC_KINDS else 'other',
+                status='current' if clean_meta(meta.get('status') or '').lower() == 'current' else 'historical')
+
+
+# ---------------------------------------------------------------- church bodies (Denominations/*.csv)
+
+CHURCH_TRADITIONS = frozenset((
+    'Presbyterian', 'Reformed', 'Baptist', 'Methodist', 'Holiness', 'Pentecostal', 'Anglican', 'Lutheran',
+    'Catholic', 'Orthodox', 'Congregational', 'Anabaptist', 'Quaker', 'Restorationist', 'Moravian', 'Other'))
+DOC_KINDS = frozenset(('constitution', 'discipline', 'canons', 'digest', 'minutes', 'journal', 'report',
+                       'confession', 'catechism', 'liturgy', 'manual', 'history', 'other'))
+# Body names and aliases reach an AI with search results: letters, digits, spaces and plain punctuation only.
+CHURCH_TEXT_RE = re.compile(r"[\w .,:'’()&/–-]+")
+CHURCH_NAME_MAX = 160
+CHURCH_LIST_MAX = 40          # tags, aliases or ancestors of one row
+ANCESTOR_RE = re.compile(r'^(?P<body>[^\[\]]+?)(?:\s*\[(?P<from>\d{3,4})?\.\.(?P<to>\d{3,4})?\])?$')
+
+
+@dataclass
+class ChurchBody:
+    name: str
+    tradition: str
+    founded: int | None
+    ended: int | None
+    tags: list[str]          # the `denomination:` values of its works
+    aliases: list[str]
+    verified: bool
+
+
+@dataclass
+class ChurchName:
+    """A present-day body (or other common name) and the historical bodies it descends from."""
+    name: str
+    aliases: list[str]
+    tradition: str
+    ancestors: list[tuple[str, int | None, int | None]]   # (body, records from year, to year)
+    verified: bool
+
+
+def _church_list(value, what: str) -> list[str] | None:
+    """'a; b; c' as a list, or None (with a warning) when an item is too long or has other characters."""
+    items = [p.strip() for p in clean_meta(value).split(';') if p.strip()]
+    if len(items) > CHURCH_LIST_MAX or any(len(i) > CHURCH_NAME_MAX or not CHURCH_TEXT_RE.fullmatch(i)
+                                           for i in items):
+        warn(f'church {what} refused: {str(value)[:80]!r}')
+        return None
+    return items
+
+
+def _csv_rows(repo: Path, rel: str) -> list[dict]:
+    try:
+        path = repo_file(repo, rel)
+    except (UnsafePath, FileNotFoundError):
+        return []
+    with open(path, newline='', encoding='utf-8') as fh:
+        return list(csv.DictReader(fh))
+
+
+def load_church_bodies(repo: Path) -> tuple[list[ChurchBody], list[ChurchName]]:
+    """The books repo's Denominations/lineage.csv (bodies whose records the library holds) and
+    Denominations/present-day.csv (present-day names and their ancestors). ([], []) without the files.
+    Rows with an unknown tradition, a malformed field or text outside CHURCH_TEXT_RE are left out with a
+    warning, and so are ancestors that are not bodies."""
+    bodies: dict[str, ChurchBody] = {}
+    for row in _csv_rows(repo, 'Denominations/lineage.csv'):
+        name = clean_meta(row.get('body') or '')
+        tradition = clean_meta(row.get('tradition') or '')
+        tags = _church_list(row.get('tags') or '', 'tags')
+        aliases = _church_list(row.get('aliases') or '', 'aliases')
+        if not name or len(name) > CHURCH_NAME_MAX or not CHURCH_TEXT_RE.fullmatch(name) \
+                or tradition not in CHURCH_TRADITIONS or tags is None or aliases is None or name in bodies:
+            warn(f'church body refused: {name[:80]!r}')
+            continue
+        bodies[name] = ChurchBody(name, tradition, _year(row.get('founded')), _year(row.get('ended')), tags,
+                                  aliases, clean_meta(row.get('verified') or '').lower() == 'yes')
+    names: dict[str, ChurchName] = {}
+    for row in _csv_rows(repo, 'Denominations/present-day.csv'):
+        name = clean_meta(row.get('name') or '')
+        tradition = clean_meta(row.get('tradition') or '')
+        aliases = _church_list(row.get('aliases') or '', 'aliases')
+        raw = [p.strip() for p in clean_meta(row.get('descends_from') or '').split(';') if p.strip()]
+        ancestors = []
+        for a in raw[:CHURCH_LIST_MAX]:
+            m = ANCESTOR_RE.match(a)
+            if not m or m.group('body').strip() not in bodies:
+                warn(f'church ancestor refused: {a[:80]!r}')
+                continue
+            lo = int(m.group('from')) if m.group('from') else None
+            hi = int(m.group('to')) if m.group('to') else None
+            ancestors.append((m.group('body').strip(), lo, hi))
+        if not name or len(name) > CHURCH_NAME_MAX or not CHURCH_TEXT_RE.fullmatch(name) \
+                or tradition not in CHURCH_TRADITIONS or aliases is None or not ancestors or name in names:
+            warn(f'church name refused: {name[:80]!r}')
+            continue
+        names[name] = ChurchName(name, aliases, tradition, ancestors,
+                                 clean_meta(row.get('verified') or '').lower() == 'yes')
+    return list(bodies.values()), list(names.values())
 
 
 # ---------------------------------------------------------------- parsing one file

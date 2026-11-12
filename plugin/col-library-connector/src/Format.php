@@ -70,7 +70,7 @@ final class Format
         $blocks = [];
         foreach ($r->hits as $i => $p) {
             $head = self::passageHeader($p, $r->offset + $i + 1) . self::matchLabel($p['match'] ?? null)
-                . self::authorLine($p['work']);
+                . self::authorLine($p['work']) . self::churchLine($p['work']);
             if (isset($p['context_before'])) {
                 $head .= "\n" . self::contextLine($p['context_before'], 'before');
             }
@@ -217,7 +217,7 @@ final class Format
         }
         $where = array_filter([$work['source_url'] !== '' ? 'Copied from: ' . self::field($work['source_url'], 500) : '',
                                $work['license'] !== '' ? 'License: ' . self::field($work['license'], 200) : '']);
-        $top .= self::authorLine($work);
+        $top .= self::authorLine($work) . self::churchLine($work);
         $top .= $where !== [] ? "\n" . implode(' · ', $where) : '';
         $top .= self::scanLine($work);
         $blocks = [];
@@ -266,6 +266,9 @@ final class Format
             $lines[] = implode(' · ', $facts);
             if (($w['author_note'] ?? '') !== '') {
                 $lines[] = ltrim(self::authorLine($w));
+            }
+            if (self::churchLine($w) !== '') {
+                $lines[] = ltrim(self::churchLine($w));
             }
             if ($w['source_url'] !== '') {
                 $lines[] = 'Copied from: ' . self::field($w['source_url'], 500);
@@ -341,7 +344,7 @@ final class Format
         $blocks = [];
         foreach ($r->hits as $i => $p) {
             $blocks[] = ['head' => self::passageHeader($p, $r->offset + $i + 1) . " · (cites {$p['cites']})"
-                             . ($p['in_note'] ? ' (in a margin note)' : '') . self::authorLine($p['work']),
+                             . ($p['in_note'] ? ' (in a margin note)' : '') . self::authorLine($p['work']) . self::churchLine($p['work']),
                          'text' => Text::inert($p['text']), 'tail' => self::notesLine($p) . self::scanLine($p['work']) . self::sourceLine($p['work'])
                              . self::pageLinkLine($p['work'], $p['page_start'] ?? null, $p['text'])];
         }
@@ -550,7 +553,7 @@ final class Format
     {
         $p = $m['passage'];
         $w = $m['work'];
-        $out = self::passageHeader($p) . ' · Match: ' . self::quoteMatchLabel($m) . self::authorLine($w);
+        $out = self::passageHeader($p) . ' · Match: ' . self::quoteMatchLabel($m) . self::authorLine($w) . self::churchLine($w);
         $text = Text::inert(Text::oneLine(Text::plain($m['text']), 3000));
         if ($m['edits'] === 0 && $m['misread'] === 0) {
             $out .= "\nThe library's wording: \"" . $text . '"';
@@ -701,6 +704,13 @@ final class Format
         $note = (string) ($w['author_note'] ?? '');
         return $note === '' || $w['author'] === '' ? ''
             : "\nAuthor: " . self::field($w['author'], 200) . ' (' . self::field($note, 300) . ')';
+    }
+
+    /** "\nChurch record: …" for a work from the library's church records (Churches::label), else "". */
+    private static function churchLine(array $w): string
+    {
+        $label = Churches::label($w);
+        return $label === '' ? '' : "\n" . self::field($label, 600);
     }
 
     /** " · Match: close" for a search result that carries a match strength, else "". */

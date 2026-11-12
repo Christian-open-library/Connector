@@ -17,7 +17,7 @@ use ColLibrary\RateLimit;
 use ColLibrary\Store;
 use ColLibrary\Voyage;
 
-col_src('Context', 'Config', 'Log', 'RateLimit', 'Text', 'Store', 'Voyage', 'Search', 'Format', 'Tools', 'Bible',
+col_src('Context', 'Config', 'Log', 'RateLimit', 'Text', 'Store', 'Voyage', 'Search', 'Churches', 'Format', 'Tools', 'Bible',
     'Citations', 'Dictionary', 'Quote');
 
 const DIR = __DIR__;

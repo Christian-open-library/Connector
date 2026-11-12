@@ -49,7 +49,8 @@ TOOL = 'search_library'
 KS = (3, 8)
 SEQ_MULT = 100_000                      # passage id = work_id * SEQ_MULT + seq (DESIGN.md 2)
 KINDS = ('quote', 'paraphrase', 'doctrine', 'old-spelling', 'filtered', 'exact')
-FILTER_KEYS = ('author', 'work_id', 'collection', 'year_from', 'year_to', 'mode', 'offset')
+FILTER_KEYS = ('author', 'work_id', 'collection', 'denomination', 'tradition', 'year_from', 'year_to', 'mode',
+               'offset')
 USER_AGENT = 'col-library-eval/1.0'
 
 # "[3] P1234500017 · Author, *Title* (1657) · pp. 23–24 · Section" (tolerates bold/heading marks)

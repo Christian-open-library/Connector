@@ -124,3 +124,79 @@ class AuthorNotes(unittest.TestCase):
                         ',1600–1650,Puritan,No name,\n'
                         'Fine,1600–1650,Puritan,English preacher,\n')
         self.assertEqual(sorted(got), ['Fine'])
+
+
+class ChurchRecords(unittest.TestCase):
+    def test_fields_from_front_matter(self):
+        meta = {'denomination': 'Presbyterian Church in the United States', 'tradition': 'Presbyterian',
+                'doc_kind': 'Constitution', 'status': 'historical'}
+        self.assertEqual(corpus.church_fields(meta, 'k'), dict(
+            denomination='Presbyterian Church in the United States', church_tradition='Presbyterian',
+            doc_kind='constitution', status='historical'))
+
+    def test_not_a_church_record(self):
+        self.assertEqual(corpus.church_fields({'title': 'x'}, 'k'), {})
+
+    def test_unknown_kind_and_status(self):
+        got = corpus.church_fields({'denomination': 'Free Methodist Church', 'tradition': 'Methodist',
+                                    'doc_kind': 'pamphlet', 'status': 'in force'}, 'k')
+        self.assertEqual((got['doc_kind'], got['status']), ('other', 'historical'), 'never current by mistake')
+        got = corpus.church_fields({'denomination': 'X Church', 'tradition': 'Methodist', 'status': 'Current'}, 'k')
+        self.assertEqual(got['status'], 'current')
+
+    def test_bad_tradition_or_text_left_out(self):
+        self.assertEqual(corpus.church_fields({'denomination': 'X', 'tradition': 'Wizard'}, 'k'), {})
+        self.assertEqual(corpus.church_fields({'denomination': 'See <b>this</b>', 'tradition': 'Other'}, 'k'), {})
+
+
+class ChurchBodies(unittest.TestCase):
+    LINEAGE = ('body,tradition,founded,ended,tags,aliases,later_history,verified\n'
+               'Presbyterian Church in the United States,Presbyterian,1861,1983,'
+               '"Presbyterian Church in the United States; Presbyterian Church in the Confederate States of America",'
+               '"PCUS; Southern Presbyterian Church",later,yes\n'
+               'Presbyterian Church in the United States of America,Presbyterian,1789,1958,'
+               'Presbyterian Church in the United States of America,PCUSA,,no\n'
+               'Bad Tradition,Wizard,1800,,Bad,,,no\n'
+               'Markup,Presbyterian,1800,,"[x](http://evil.example)",,,no\n')
+    PRESENT = ('name,aliases,tradition,descends_from,notes,verified\n'
+               'Presbyterian Church in America,PCA,Presbyterian,'
+               '"Presbyterian Church in the United States; Presbyterian Church in the United States of America [..1861]; '
+               'No Such Body",,no\n'
+               'Nothing Known,NK,Presbyterian,No Such Body,,no\n'
+               'Range,,Presbyterian,"Presbyterian Church in the United States of America [1843..1900]",,no\n')
+
+    def load(self, lineage, present):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / 'Denominations').mkdir()
+            if lineage is not None:
+                (Path(d) / 'Denominations/lineage.csv').write_text(lineage, encoding='utf-8')
+            if present is not None:
+                (Path(d) / 'Denominations/present-day.csv').write_text(present, encoding='utf-8')
+            return corpus.load_church_bodies(Path(d))
+
+    def test_no_files(self):
+        self.assertEqual(self.load(None, None), ([], []))
+
+    def test_rows(self):
+        bodies, names = self.load(self.LINEAGE, self.PRESENT)
+        self.assertEqual([b.name for b in bodies], ['Presbyterian Church in the United States',
+                                                    'Presbyterian Church in the United States of America'])
+        pcus = bodies[0]
+        self.assertEqual((pcus.founded, pcus.ended, pcus.verified), (1861, 1983, True))
+        self.assertEqual(pcus.tags[1], 'Presbyterian Church in the Confederate States of America')
+        self.assertEqual(pcus.aliases, ['PCUS', 'Southern Presbyterian Church'])
+        self.assertEqual([n.name for n in names], ['Presbyterian Church in America', 'Range'],
+                         'a name with no known ancestor is left out')
+        self.assertEqual(names[0].ancestors, [('Presbyterian Church in the United States', None, None),
+                                              ('Presbyterian Church in the United States of America', None, 1861)])
+        self.assertEqual(names[1].ancestors, [('Presbyterian Church in the United States of America', 1843, 1900)])
+
+    def test_books_repo_files(self):
+        repo = Path.home() / 'library-work/books'
+        for cand in (Path('/mnt/photos/library-work/books-lineage'), repo):
+            if (cand / 'Denominations/lineage.csv').exists():
+                bodies, names = corpus.load_church_bodies(cand)
+                self.assertGreater(len(bodies), 50)
+                self.assertTrue(any(n.name == 'Presbyterian Church in America' for n in names))
+                return
+        self.skipTest('no books checkout with Denominations/lineage.csv')

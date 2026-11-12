@@ -63,7 +63,8 @@ function test_definitions(): void
     }
     $search = $defs[0]['inputSchema'];
     assert_same(['query'], $search['required']);
-    assert_same(['query', 'author', 'work_id', 'collection', 'year_from', 'year_to', 'mode', 'limit', 'offset'],
+    assert_same(['query', 'author', 'work_id', 'collection', 'denomination', 'tradition', 'year_from', 'year_to',
+        'mode', 'limit', 'offset'],
         array_keys($search['properties']));
     assert_same(500, $search['properties']['query']['maxLength']);
     assert_same([1, 20, 8], [$search['properties']['limit']['minimum'], $search['properties']['limit']['maximum'],
@@ -71,7 +72,7 @@ function test_definitions(): void
     assert_same(['best', 'exact'], $search['properties']['mode']['enum']);
     assert_same(array_keys(Format::COLLECTIONS), $search['properties']['collection']['enum']);
     assert_same(['ref', 'work_id', 'page', 'before', 'after'], array_keys($defs[1]['inputSchema']['properties']));
-    assert_same(['query', 'author', 'collection', 'year_from', 'year_to', 'limit'], array_keys($defs[2]['inputSchema']['properties']));
+    assert_same(['query', 'author', 'collection', 'denomination', 'tradition', 'year_from', 'year_to', 'limit'], array_keys($defs[2]['inputSchema']['properties']));
     assert_same(50, $defs[2]['inputSchema']['properties']['limit']['maximum']);
     assert_contains('ſinne', $defs[0]['description']);
 }

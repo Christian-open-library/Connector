@@ -40,7 +40,40 @@ from indexer import corpus  # noqa: E402  (read-only use of the indexer's catalo
 
 DEFAULT_REPO = Path.home() / 'library-work' / 'books'
 KINDS = ('quote', 'paraphrase', 'doctrine', 'old-spelling', 'filtered', 'exact')
-FILTER_KEYS = {'author': str, 'collection': str, 'year_from': int, 'year_to': int, 'mode': str}
+FILTER_KEYS = {'author': str, 'collection': str, 'year_from': int, 'year_to': int, 'mode': str, 'denomination': str,
+               'tradition': str}
+
+
+def church_key(text: str) -> str:
+    """Churches::key: lower case, no accents, letters and digits only."""
+    return re.sub(r'[^0-9a-z]', '', fold(re.sub(r'^\s*the\s+', '', text, flags=re.I)))
+
+
+def denomination_allows(repo: Path, denomination: str, tag: str, title: str, year) -> bool | None:
+    """Whether the connector's denomination filter (Churches::match, exact names only) allows a record with this
+    `denomination:` tag, title and year; None when the name is not an exact body or present-day name."""
+    bodies, names = corpus.load_church_bodies(repo)
+    k = church_key(denomination)
+    allowed: dict[str, list] = {}
+    for b in bodies:
+        if any(church_key(n) == k for n in [b.name, *b.tags, *b.aliases]):
+            allowed[b.name] = [(None, None)]
+    for c in names:
+        if any(church_key(n) == k for n in [c.name, *c.aliases]):
+            for body, lo, hi in c.ancestors:
+                if allowed.get(body) != [(None, None)]:
+                    allowed.setdefault(body, []).append((lo, hi))
+    if not allowed:
+        return None
+    owner = next((b.name for b in bodies if tag in b.tags), tag)
+    ranges = allowed.get(owner)
+    if ranges is None:
+        return False
+    if (None, None) in ranges:
+        return True
+    years = [int(y) for y in re.findall(r'(?<!\d)(1[5-9]\d\d|20\d\d)(?!\d)', title)]
+    y = max(years) if years else year
+    return y is not None and any((lo is None or y >= lo) and (hi is None or y <= hi) for lo, hi in ranges)
 COLLECTIONS = set(corpus.COLLECTION_LABELS)
 QUOTED_RE = re.compile(r'"([^"]{4,})"')
 FRONTMATTER_RE = re.compile(r'\A---\n.*?\n---[ \t]*\n', re.S)
@@ -73,6 +106,8 @@ def work_meta(repo: Path, row: dict) -> dict:
         'year': corpus._year(row.get('Year')) or corpus._year(meta.get('date')),
         'collection': str(meta.get('collection') or corpus.COLLECTION_BY_FOLDER.get(top, top.lower())),
         'files': parts if parts else [key],
+        'church': corpus.church_fields(meta, key),
+        'title': row.get('Title') or str(meta.get('title') or ''),
     }
 
 
@@ -207,7 +242,7 @@ def main(argv=None) -> int:
         if (q.get('kind') == 'exact') != (filters.get('mode') == 'exact'):
             problems.append(f'{qid}: kind "exact" and filters.mode "exact" must go together')
         if q.get('kind') == 'filtered' and not set(filters) - {'mode'}:
-            problems.append(f'{qid}: a filtered question needs an author/collection/year filter')
+            problems.append(f'{qid}: a filtered question needs an author/collection/denomination/tradition/year filter')
         for key in keys:
             m = metas.get(key)
             if not m:
@@ -217,6 +252,16 @@ def main(argv=None) -> int:
                 problems.append(f'{qid}: author filter excludes {key} ({m["author"]})')
             if 'collection' in filters and filters['collection'] != m['collection']:
                 problems.append(f'{qid}: collection filter excludes {key} ({m["collection"]})')
+            if 'tradition' in filters and m['church'].get('church_tradition') != filters['tradition']:
+                problems.append(f'{qid}: tradition filter excludes {key}')
+            if 'denomination' in filters:
+                ok = denomination_allows(repo, filters['denomination'], m['church'].get('denomination', ''),
+                                         m['title'], m['year']) if m['church'] else False
+                if ok is None:
+                    problems.append(f'{qid}: denomination {filters["denomination"]!r} is not an exact body or '
+                                    'present-day name in Denominations/*.csv')
+                elif not ok:
+                    problems.append(f'{qid}: denomination filter excludes {key}')
             if ('year_from' in filters or 'year_to' in filters):
                 y = m['year']
                 if y is None or y < filters.get('year_from', -10**6) or y > filters.get('year_to', 10**6):

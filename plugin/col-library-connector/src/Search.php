@@ -31,13 +31,21 @@ final class Filters
         public readonly ?string $collection = null,
         public readonly ?int $yearFrom = null,
         public readonly ?int $yearTo = null,
+        public readonly ?string $denomination = null,
+        public readonly ?string $tradition = null,
     ) {
     }
 
     public function active(): bool
     {
         return $this->author !== null || $this->workId !== null || $this->collection !== null
-            || $this->yearFrom !== null || $this->yearTo !== null;
+            || $this->yearFrom !== null || $this->yearTo !== null || $this->churchOnly();
+    }
+
+    /** True when only church records are wanted (a denomination or tradition filter). */
+    public function churchOnly(): bool
+    {
+        return $this->denomination !== null || $this->tradition !== null;
     }
 
     public function hasYears(): bool
@@ -57,6 +65,12 @@ final class Filters
         }
         if ($this->collection !== null) {
             $parts[] = 'collection ' . $this->collection;
+        }
+        if ($this->denomination !== null) {
+            $parts[] = 'denomination "' . Text::echo($this->denomination, 80) . '"';
+        }
+        if ($this->tradition !== null) {
+            $parts[] = 'church records of the ' . $this->tradition . ' tradition';
         }
         if ($this->yearFrom !== null && $this->yearTo !== null) {
             $parts[] = $this->yearFrom === $this->yearTo ? "year {$this->yearFrom}" : "years {$this->yearFrom}–{$this->yearTo}";
@@ -84,10 +98,14 @@ final class Filters
                 . 'library\'s own results (a ref such as P1234500017 belongs to work 12345).');
         }
         $authorKey = $this->author !== null ? Text::looseKey($this->author) : null;
+        $church = $this->churchOnly() ? Churches::allowed($store, $works, $this->denomination, $this->tradition) : null;
         $ids = [];
         $noYear = 0;
         foreach ($works as $id => $w) {
             if ($this->workId !== null && $id !== $this->workId) {
+                continue;
+            }
+            if ($church !== null && !isset($church['ids'][$id])) {
                 continue;
             }
             if ($this->collection !== null && $w['collection'] !== $this->collection) {
@@ -110,6 +128,9 @@ final class Filters
             $ids[] = $id;
         }
         $notes = ['Filters: ' . $this->describe() . ' (' . count($ids) . ' work' . (count($ids) === 1 ? '' : 's') . ').'];
+        if ($church !== null) {
+            $notes = array_merge($notes, $church['notes']);
+        }
         if ($noYear > 0) {
             $notes[] = "Works without a known year are excluded by a year filter ($noYear of them matched the other filters).";
         }
@@ -122,6 +143,13 @@ final class Filters
             }
             if ($noYear > 0) {
                 $msg .= " $noYear matching works have no known year and are left out when a year range is given.";
+            }
+            if ($church !== null) {
+                $msg .= ' ' . implode(' ', array_filter($church['notes'], static fn (string $n): bool
+                    => $n !== Churches::HISTORICAL_RULE));
+                if ($church['ids'] !== []) {
+                    $msg .= ' The church records alone match ' . count($church['ids']) . ' works: loosen the other filters.';
+                }
             }
             throw new SearchInputException($msg);
         }

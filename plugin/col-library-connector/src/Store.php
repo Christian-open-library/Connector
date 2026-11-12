@@ -52,6 +52,14 @@ final class Store
     private array $workCache = [];
     /** @var array<string,string>|null author name => "dates, note"; null until read ([] for a build without the table) */
     private ?array $authorNotes = null;
+    /** @var array<int,array>|null church records by work id (Churches); [] for a build without them */
+    private ?array $churchRecords = null;
+    /** @var array<string,array>|null church bodies by name */
+    private ?array $churchBodies = null;
+    /** @var array<string,string>|null tag value => body name */
+    private ?array $churchBodyOfTag = null;
+    /** @var array<string,array>|null present-day church names */
+    private ?array $churchNames = null;
     /** @var array<string,string|false> word => modern spelling (false = none) */
     private array $spellCache = [];
     /** @var array<int,array>|null Bible books by id */
@@ -779,12 +787,146 @@ final class Store
         return $st;
     }
 
-    /** The work row with 'author_note': who the author was ("1798–1870, American Presbyterian minister"), or ''. */
+    /**
+     * The work row with 'author_note': who the author was ("1798–1870, American Presbyterian minister"), or '';
+     * and 'church': for a church record, its denomination, tradition, doc_kind, status and body (Churches), or null.
+     */
     private function noted(array $w): array
     {
         $note = $this->authorNotes()[$w['author']] ?? '';
         $w['author_note'] = $note !== '' && self::noteFits($note, $w['year']) ? $note : '';
+        $church = $this->churchRecords()[$w['id']] ?? null;
+        if ($church !== null) {
+            $church['body'] = $this->churchBodies()[$this->churchBodyOfTag()[$church['denomination']] ?? ''] ?? null;
+        }
+        $w['church'] = $church;
         return $w;
+    }
+
+    // ------------------------------------------------------------------------- church records
+
+    /** True if the build has the church tables (builds before them do not). */
+    public function hasChurchRecords(): bool
+    {
+        return $this->churchRecords() !== [] || $this->hasTables('church_records', 'church_bodies', 'church_names');
+    }
+
+    /** @return array<int,array{denomination:string, tradition:string, doc_kind:string, status:string}> by work id */
+    public function churchRecords(): array
+    {
+        if ($this->churchRecords === null) {
+            $this->churchRecords = [];
+            try {
+                if ($this->hasTables('church_records')) {
+                    foreach ($this->run('SELECT work_id, denomination, tradition, doc_kind, status FROM church_records')
+                                 ->fetchAll() as $r) {
+                        $this->churchRecords[(int) $r['work_id']] = [
+                            'denomination' => (string) $r['denomination'], 'tradition' => (string) $r['tradition'],
+                            'doc_kind' => (string) $r['doc_kind'],
+                            'status' => $r['status'] === 'current' ? 'current' : 'historical'];
+                    }
+                }
+            } catch (\PDOException $e) {
+                $this->churchRecords = [];   // unreadable table: no labels, and the filters say they are unavailable
+            }
+        }
+        return $this->churchRecords;
+    }
+
+    /**
+     * Church bodies whose records the library holds, by name, with the tag values of their records and their
+     * other names. A tag value no body lists becomes a body of its own (named after it), so every record has one.
+     * @return array<string,array{name:string, tradition:string, founded:?int, ended:?int, tags:list<string>,
+     *                             aliases:list<string>, verified:bool}>
+     */
+    public function churchBodies(): array
+    {
+        if ($this->churchBodies === null) {
+            $this->churchBodies = [];
+            try {
+                if ($this->hasTables('church_bodies')) {
+                    foreach ($this->run('SELECT name, tradition, founded, ended, tags, aliases, verified FROM church_bodies '
+                                 . 'ORDER BY name')->fetchAll() as $b) {
+                        $name = (string) $b['name'];
+                        $this->churchBodies[$name] = ['name' => $name, 'tradition' => (string) $b['tradition'],
+                            'founded' => $b['founded'] === null ? null : (int) $b['founded'],
+                            'ended' => $b['ended'] === null ? null : (int) $b['ended'],
+                            'tags' => self::stringList($b['tags']), 'aliases' => self::stringList($b['aliases']),
+                            'verified' => (int) $b['verified'] === 1];
+                    }
+                }
+            } catch (\PDOException $e) {
+                $this->churchBodies = [];
+            }
+            $listed = [];
+            foreach ($this->churchBodies as $name => $b) {
+                foreach ($b['tags'] as $t) {
+                    $listed[$t] = true;
+                }
+            }
+            foreach ($this->churchRecords() as $r) {
+                $t = $r['denomination'];
+                if (!isset($listed[$t]) && !isset($this->churchBodies[$t])) {
+                    $this->churchBodies[$t] = ['name' => $t, 'tradition' => $r['tradition'], 'founded' => null,
+                        'ended' => null, 'tags' => [$t], 'aliases' => [], 'verified' => false];
+                }
+            }
+        }
+        return $this->churchBodies;
+    }
+
+    /** @return array<string,string> tag value (a record's denomination) => body name */
+    public function churchBodyOfTag(): array
+    {
+        if ($this->churchBodyOfTag === null) {
+            $this->churchBodyOfTag = [];
+            foreach ($this->churchBodies() as $name => $b) {
+                foreach ($b['tags'] as $t) {
+                    $this->churchBodyOfTag[$t] ??= $name;
+                }
+            }
+        }
+        return $this->churchBodyOfTag;
+    }
+
+    /**
+     * Present-day bodies and other common names, with the bodies they descend from.
+     * @return array<string,array{name:string, aliases:list<string>, tradition:string,
+     *                             ancestors:list<array{0:string,1:?int,2:?int}>, verified:bool}>
+     */
+    public function churchNames(): array
+    {
+        if ($this->churchNames === null) {
+            $this->churchNames = [];
+            try {
+                if ($this->hasTables('church_names')) {
+                    foreach ($this->run('SELECT name, aliases, tradition, ancestors, verified FROM church_names ORDER BY name')
+                                 ->fetchAll() as $c) {
+                        $ancestors = [];
+                        $raw = json_decode((string) $c['ancestors'], true, 4);
+                        foreach (is_array($raw) ? $raw : [] as $a) {
+                            if (is_array($a) && count($a) === 3 && is_string($a[0])
+                                && ($a[1] === null || is_int($a[1])) && ($a[2] === null || is_int($a[2]))) {
+                                $ancestors[] = [$a[0], $a[1], $a[2]];
+                            }
+                        }
+                        $this->churchNames[(string) $c['name']] = ['name' => (string) $c['name'],
+                            'aliases' => self::stringList($c['aliases']), 'tradition' => (string) $c['tradition'],
+                            'ancestors' => $ancestors, 'verified' => (int) $c['verified'] === 1];
+                    }
+                }
+            } catch (\PDOException $e) {
+                $this->churchNames = [];
+            }
+        }
+        return $this->churchNames;
+    }
+
+    /** @return list<string> the strings of a JSON list ([] if it is not one) */
+    private static function stringList(mixed $json): array
+    {
+        $v = json_decode((string) $json, true, 3);
+        return is_array($v) ? array_values(array_filter($v, 'is_string')) : [];
     }
 
     /**

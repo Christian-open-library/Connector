@@ -90,6 +90,15 @@ def _texts(db):
             yield f'author:{name}', 'note', 0, ' | '.join(x for x in (name, dates, note) if x)
     except sqlite3.OperationalError:
         pass   # a build made before author notes existed
+    try:
+        for work_key, den in db.execute('SELECT w.key, c.denomination FROM church_records c JOIN works w ON w.id = c.work_id'):
+            yield work_key, 'church', 0, den
+        for name, tags, aliases in db.execute('SELECT name, tags, aliases FROM church_bodies'):
+            yield f'church:{name}', 'church', 0, ' | '.join((name, tags, aliases))
+        for name, aliases in db.execute('SELECT name, aliases FROM church_names'):
+            yield f'church:{name}', 'church', 0, ' | '.join((name, aliases))
+    except sqlite3.OperationalError:
+        pass   # a build made before the church tables existed
 
 
 def scan(build_dir: Path, allowed: set | None = None):

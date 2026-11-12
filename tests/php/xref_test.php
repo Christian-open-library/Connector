@@ -888,7 +888,8 @@ function test_definitions_of_the_new_tools(): void
     assert_same('bsb', $read['inputSchema']['properties']['translation']['default']);
     assert_same(100, $read['inputSchema']['properties']['reference']['maxLength']);
     $cite = $defs['find_scripture_citations'];
-    assert_same(['reference', 'author', 'work_id', 'collection', 'year_from', 'year_to', 'include_chapter_refs', 'limit',
+    assert_same(['reference', 'author', 'work_id', 'collection', 'denomination', 'tradition', 'year_from', 'year_to',
+                 'include_chapter_refs', 'limit',
                  'offset'], array_keys($cite['inputSchema']['properties']));
     assert_same(['type' => 'boolean', 'default' => true],
         array_intersect_key($cite['inputSchema']['properties']['include_chapter_refs'], ['type' => 1, 'default' => 1]));
