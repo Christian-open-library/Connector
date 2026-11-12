@@ -45,7 +45,7 @@ function test_definitions(): void
 {
     $defs = Tools::definitions();
     assert_same(['search_library', 'read_passage', 'find_works', 'read_scripture', 'find_scripture_citations',
-                 'define_term'], array_column($defs, 'name'));
+                 'define_term', 'check_quote'], array_column($defs, 'name'));
     foreach ($defs as $d) {
         assert_true((bool) preg_match('/^[a-z0-9_]{1,64}$/', $d['name']), 'name');
         assert_true(is_string($d['title']) && $d['title'] !== '', 'title');
@@ -362,7 +362,7 @@ function test_mcp_round_trip(): void
     $legacy = ['MCP-Protocol-Version' => '2025-11-25'];
     $list = $post(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list'], $legacy);
     assert_same(['search_library', 'read_passage', 'find_works', 'read_scripture', 'find_scripture_citations',
-                 'define_term'], array_column($list['result']['tools'], 'name'));
+                 'define_term', 'check_quote'], array_column($list['result']['tools'], 'name'));
     $call = $post(['jsonrpc' => '2.0', 'id' => 2, 'method' => 'tools/call',
                    'params' => ['name' => 'search_library', 'arguments' => ['query' => 'the chief end of man', 'limit' => 2]]], $legacy);
     assert_false($call['result']['isError']);

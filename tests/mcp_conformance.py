@@ -46,7 +46,7 @@ import requests
 LEGACY_VERSIONS = ('2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05')
 MODERN_VERSION = '2026-07-28'
 EXPECTED_TOOLS = ('search_library', 'read_passage', 'find_works', 'read_scripture', 'find_scripture_citations',
-                  'define_term')
+                  'define_term', 'check_quote')
 TOOL_NAME_RE = re.compile(r'^[a-z0-9_]{1,64}$')
 KEY_RE = re.compile(r'/mcp/([A-Za-z0-9_-]{20,128})(?=$|[/?&#])')
 REF_RE = re.compile(r'\bP(\d{6,12})\b')

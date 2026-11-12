@@ -546,7 +546,7 @@ final class Search
     // -------------------------------------------------------------------------------- vectors
 
     /** Why the vector side cannot run for this build and config, or null if it can. */
-    private function vectorProblem(): ?string
+    public function vectorProblem(): ?string
     {
         if (!$this->store->vectorsReady()) {
             return 'index has no vectors';

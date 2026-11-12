@@ -935,7 +935,8 @@ function test_mcp_round_trip_of_the_new_tools(): void
     };
     $legacy = ['MCP-Protocol-Version' => '2025-11-25'];
     $list = $post(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list'], $legacy);
-    assert_same(['search_library', 'read_passage', 'find_works', 'read_scripture', 'find_scripture_citations', 'define_term'],
+    assert_same(['search_library', 'read_passage', 'find_works', 'read_scripture', 'find_scripture_citations', 'define_term',
+                  'check_quote'],
         array_column($list['result']['tools'], 'name'));
     $r = $post(['jsonrpc' => '2.0', 'id' => 2, 'method' => 'tools/call',
                 'params' => ['name' => 'read_scripture', 'arguments' => ['reference' => 'John 3:16']]], $legacy);

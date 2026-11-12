@@ -20,6 +20,7 @@ Six read-only tools:
 | `read_scripture` | Reads Bible passages in seven public-domain translations (Berean Standard Bible by default). |
 | `find_scripture_citations` | Finds which historic writers cited a verse, and where. |
 | `define_term` | Looks up words in older Bible and theological dictionaries. |
+| `check_quote` | Checks a quotation: did this author really write these words? It answers found word for word (with book, year, page and the sentences around it), found but worded differently (the real wording beside the one given, differences marked), found but by someone else (the earliest author in the library who used the words), or not found (which does not prove the quotation is false). |
 
 Each result comes with the text around it, so the AI can quote an author's own position rather than an objection he goes on to answer. If a quotation appears word for word in the library, it ranks first.
 

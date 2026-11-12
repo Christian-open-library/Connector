@@ -59,7 +59,7 @@ def main():
         return 1
     _, r = call(url, {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})
     names = [t['name'] for t in r.get('result', {}).get('tools', [])]
-    check('tools/list', len(names) == 6, ', '.join(names))
+    check('tools/list', len(names) == 7, ', '.join(names))
     for i, (name, args, must) in enumerate([
         ('search (best)', {'query': 'the assurance of salvation', 'limit': 3}, '[1] P'),
         ('search (exact)', {'query': 'grace of god', 'mode': 'exact', 'limit': 2}, '[1] P'),
@@ -83,6 +83,11 @@ def main():
     _, r = call(url, {'jsonrpc': '2.0', 'id': 22, 'method': 'tools/call',
                       'params': {'name': 'read_scripture', 'arguments': {'reference': 'John 1:1'}}})
     check('read_scripture', 'In the beginning was the Word' in text(r), text(r).split('\n', 1)[0][:90])
+    _, r = call(url, {'jsonrpc': '2.0', 'id': 23, 'method': 'tools/call',
+                      'params': {'name': 'check_quote', 'arguments': {
+                          'quote': 'Be killing sin, or it will be killing you', 'author': 'Spurgeon'}}})
+    check('check_quote', 'FOUND, BUT NOT BY Spurgeon' in text(r) and 'John Owen' in text(r),
+          text(r).split('\n', 2)[1][:90] if text(r).count('\n') else text(r)[:90])
     print(f'smoke test: {passed} of {total} passed')
     return 0 if passed == total else 1
 

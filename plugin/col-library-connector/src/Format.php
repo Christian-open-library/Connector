@@ -417,6 +417,142 @@ final class Format
             . '"justif" finds every headword that begins with it), or a related word.';
     }
 
+    // ------------------------------------------------------------------------------ check_quote
+
+    /** What every quote check that finds nothing must say. */
+    public const QUOTE_NOT_FOUND_RULE = 'This does not show that the quotation is false: the library holds about 4,600 '
+        . 'works, not everything ever written or every edition, so it can only say that it cannot confirm it. Tell the '
+        . 'user so plainly. ' . self::FROM_MEMORY_RULE;
+
+    public static function quoteCheck(QuoteResult $r): string
+    {
+        $who = $r->author !== null ? Text::echo($r->author, 100) : null;
+        $top = 'Quote check: "' . Text::echo($r->quote, 600) . '"' . ($who !== null ? " (credited to $who)" : '');
+        $p = $r->primary;
+        $e = $r->earliest;
+        $lines = [];
+        if ($p === null) {
+            $lines[] = 'NOT FOUND: no passage in the library has these words or wording close to them. '
+                . self::QUOTE_NOT_FOUND_RULE;
+            if ($who !== null) {
+                $lines[] = $r->authorWorks > 0
+                    ? 'The library has ' . self::plural($r->authorWorks, 'work') . " by $who; it holds only some of this author's writings."
+                    : "The library has no works by $who.";
+            }
+            foreach ($r->notes as $n) {
+                $lines[] = $n;
+            }
+            return $top . "\n" . implode("\n", $lines);
+        }
+        $where = self::quoteWhere($p);
+        $credit = $p['credit'] !== null ? self::field($p['credit'], 80) : null;
+        if ($r->verdict === QuoteResult::OTHER_AUTHOR && $credit !== null
+            && Quote::byAuthor($p['work'], Quote::authorWords((string) $r->author))) {
+            $lines[] = "FOUND, BUT BY SOMEONE ELSE: the words are in $where, but there $who is quoting $credit: a credit "
+                . "line, \"— $credit\", follows them. Tell the user the words are $credit's as quoted by $who"
+                . ($p['edits'] > 0 ? ' (worded a little differently; see below)' : '') . '.';
+        } elseif ($r->verdict === QuoteResult::OTHER_AUTHOR) {
+            $lines[] = "FOUND, BUT NOT BY $who: the earliest work in the library with these words is $where"
+                . ($p['edits'] > 0 ? ' (worded a little differently; see below)' : '') . '. '
+                . ($r->authorWorks > 0
+                    ? 'None of the library\'s ' . self::plural($r->authorWorks, 'work') . " by $who has them (the library "
+                        . 'holds only some of this author\'s writings, so this does not prove the words are not theirs).'
+                    : "The library has no works by $who, so it cannot say whether he also used these words.");
+            $lines[] = 'Tell the user who the library shows using these words first, and that the credit to ' . $who
+                . ' is not confirmed.';
+        } elseif ($r->verdict === QuoteResult::EXACT) {
+            $lines[] = "FOUND WORD FOR WORD: these words are in $where. Spelling, capitals and punctuation were not "
+                . 'compared; quote the library\'s wording below.';
+        } else {
+            $lines[] = "FOUND, BUT WORDED DIFFERENTLY: the closest wording is in $where: {$p['same']} of the {$p['words']} "
+                . 'words given are there in the same order. The real wording and the one given are shown side by side '
+                . 'below, with the words that differ in bold. Quote the library\'s wording, not the version given.';
+        }
+        if ($r->verdict !== QuoteResult::OTHER_AUTHOR && $e !== null && $e['work']['id'] !== $p['work']['id']
+            && $e['when'] < $p['when'] && Text::looseKey($e['work']['author']) !== Text::looseKey($p['work']['author'])) {
+            $lines[] = 'EARLIER SOURCE: ' . ($e['edits'] === 0 ? 'the same words are' : 'similar words are')
+                . ' in an earlier work, ' . self::quoteWhere($e) . '. '
+                . ($who !== null ? "$who may have been quoting or echoing it; say so." : 'The later writer may have been quoting it.');
+        }
+        if ($r->phraseWorks > Quote::COMMON_WORKS) {
+            array_unshift($lines, 'COMMON WORDING: ' . number_format($r->phraseWorks) . ' or more works in the library use these exact '
+                . 'words, so they may be a Bible verse, a proverb or a stock phrase; the earliest holder is not necessarily '
+                . 'their author.');
+        }
+        if ($credit !== null && $r->verdict !== QuoteResult::OTHER_AUTHOR) {
+            $lines[] = "NOTE: in this work a credit line, \"— $credit\", follows the words: the writer is quoting $credit.";
+        } elseif ($credit === null && $p['quoting']) {
+            $lines[] = 'NOTE: just before these words the writer seems to be quoting someone (a quotation mark, or a word '
+                . 'such as "saith" or "says"): read the sentences before them to see whose words they are.';
+        }
+        foreach ($r->notes as $n) {
+            $lines[] = $n;
+        }
+        $out = $top . "\n" . implode("\n", $lines) . "\n\n" . self::quoteBlock($p);
+        $others = array_values(array_filter($r->matches, static fn (array $m): bool => $m['work']['id'] !== $p['work']['id']));
+        if ($others !== []) {
+            $out .= "\n\nOther works in the library with these words (earliest first"
+                . (count($others) > 8 ? ', 8 of ' . count($others) : '') . '):';
+            foreach (array_slice($others, 0, 8) as $m) {
+                $out .= "\n- " . self::quoteWhere($m) . ' · P' . $m['passage']['id'] . ' · ' . self::quoteMatchLabel($m)
+                    . ($m['credit'] !== null ? ' · credited there to ' . self::field($m['credit'], 80)
+                        : ($m['quoting'] ? ' · seems to be quoting someone' : ''));
+            }
+        }
+        return mb_strlen($out) > self::MAX_CHARS ? Text::clip($out, self::MAX_CHARS) : $out;
+    }
+
+    /** "John Owen (1616–1683), *Of the Mortification of Sin* (1668), p. 11" */
+    private static function quoteWhere(array $m): string
+    {
+        $w = $m['work'];
+        $note = (string) ($w['author_note'] ?? '');
+        $dates = $note !== '' ? trim(explode(',', $note, 2)[0]) : '';
+        $title = $w['title'] !== '' ? $w['title'] : 'Untitled';
+        $page = $m['page'] !== null && $m['page'] !== '' ? $m['page'] : null;
+        $pageEnd = $m['page_end'] !== null && $m['page_end'] !== '' ? $m['page_end'] : null;
+        return ($w['author'] !== '' ? self::field($w['author'], 200) . ($dates !== '' ? ' (' . self::field($dates, 60) . ')' : '')
+                . ', ' : '')
+            . '*' . self::field($title, 300) . '*' . ($w['year'] !== null ? ' (' . $w['year'] . ')' : ' (year not known)')
+            . ($page !== null ? ', ' . self::pages($page, $pageEnd ?? $page) : '');
+    }
+
+    private static function quoteMatchLabel(array $m): string
+    {
+        return $m['edits'] === 0 ? 'word for word' : "{$m['same']} of {$m['words']} words the same";
+    }
+
+    /** The passage block: header, author, the wording (side by side when it differs), context, links. */
+    private static function quoteBlock(array $m): string
+    {
+        $p = $m['passage'];
+        $w = $m['work'];
+        $out = self::passageHeader($p) . ' · Match: ' . self::quoteMatchLabel($m) . self::authorLine($w);
+        $text = Text::inert(Text::oneLine(Text::plain($m['text']), 3000));
+        if ($m['edits'] === 0) {
+            $out .= "\nThe library's wording: \"" . $text . '"';
+        } else {
+            $out .= "\nCompared word by word (spelling, capitals and punctuation ignored; differing words in bold):"
+                . "\nThe library's wording: \"" . Text::inert(Text::oneLine(self::plainKeepBold($m['lib_marked']), 3000)) . '"'
+                . "\nThe wording given:     \"" . Text::inert(Text::oneLine($m['quote_marked'], 3000)) . '"';
+            if ($m['changes'] !== []) {
+                $out .= "\nDifferences (given vs library): " . Text::inert(Text::oneLine(implode('; ', $m['changes']), 1500));
+            }
+        }
+        $out .= "\nIn context: \"" . Text::inert(Text::oneLine($m['before'], 600)) . ($m['before'] !== '' ? ' ' : '')
+            . '**' . $text . '**' . (preg_match('/^\s/u', $m['after']) === 1 ? ' ' : '')
+            . Text::inert(Text::oneLine($m['after'], 600)) . '"'
+            . self::scanLine($w) . self::sourceLine($w) . self::pageLinkLine($w, $m['page']);
+        return $out;
+    }
+
+    /** Text::plain() that keeps the **bold** marks added by the quote checker. */
+    private static function plainKeepBold(string $text): string
+    {
+        $text = str_replace('**', "\u{E000}", $text);
+        return str_replace("\u{E000}", '**', Text::plain($text));
+    }
+
     // ------------------------------------------------------------------------------- pieces
 
     /** "[n] P<id> · Author, *Title* (Year) · pp. X–Y · Section" */
