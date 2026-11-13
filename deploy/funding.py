@@ -6,8 +6,10 @@
 
 deploy-office.sh members runs members.py json through `attach`, so the card is refreshed whenever the
 member list is (nightly). The server prices the searches it was billed for itself; this adds:
-  - deploy/costs.json: monthly costs (domain, electricity estimate), one-time costs, and the months
-    the curator paid for himself (covered_by_curator: those months need no gifts, so gifts go forward);
+  - deploy/costs.json: planned_use (search tokens a day the coming months plan for, and for whom),
+    monthly costs (domain, electricity estimate), one-time costs, and the months
+    the curator paid for himself (covered_by_curator: those months need no gifts, so gifts go forward;
+    its 'given' are amounts he gives toward a month, shown as given like any gift);
   - new books: the Voyage tokens nightly builds were billed for ("embedded ..., 2.9M tokens billed" in
     data/logs/update-YYYYMMDD.log), at voyage-4-lite's price;
   - gifts: GitHub Sponsors, read with gh as the account that receives them (totals only, no names).
@@ -112,14 +114,21 @@ def compute(now: datetime | None = None) -> dict:
         m = next_month(m)
     if spons is not None:
         gifts[current] = months[current]['given_cents']
+    for gm, cents in curator.get('given', {}).items():   # after recording: the ledger keeps Sponsors only
+        if gm in months:
+            months[gm]['given_cents'] += int(cents)
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     tmp = LEDGER.with_suffix('.tmp')
     tmp.write_text(json.dumps(ledger, indent=1, sort_keys=True) + '\n')
     tmp.replace(LEDGER)
     if problem:
         print(f'funding: {problem}; using the recorded gifts', file=sys.stderr)
-    return {'updated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            'sponsors_url': SPONSORS_URL, 'months': months}
+    out = {'updated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+           'sponsors_url': SPONSORS_URL, 'months': months}
+    plan = costs.get('planned_use')
+    if plan:
+        out['plan'] = {'rerank_per_day': int(plan['rerank_tokens_per_day']), 'people': str(plan['people'])}
+    return out
 
 
 def main(argv: list) -> int:
@@ -135,6 +144,8 @@ def main(argv: list) -> int:
         print(f'  {"Costs from here":<44} ${total / 100:>7.2f}\n  {"Given":<44} ${row["given_cents"] / 100:>7.2f}')
         if row.get('covered_by'):
             print(f'  covered by {row["covered_by"]}')
+        if row.get('covered_cents'):
+            print(f'  {"Covered":<44} ${row["covered_cents"] / 100:>7.2f}')
         return 0
     if cmd == 'attach':
         data = sys.stdin.read()

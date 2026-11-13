@@ -1,6 +1,11 @@
 {
   "_about": "Running costs shown on the public cost card (deploy/funding.py). Amounts in US cents. Searches and new books are metered, so they are not listed here.",
   "start": "2026-11",
+  "planned_use": {
+    "people": "hundreds of people",
+    "rerank_tokens_per_day": 40000000,
+    "_note": "Hundreds of people a day would reach the search AI's daily limit (max_voyage_tokens_per_day, 40M since 2026-11-12), about $2 a day once the free tokens are gone; the coming months plan for that. Measured 12 Nov: up to 18 people and 9.4M tokens a day."
+  },
   "monthly": [
     {
       "name": "Domain name",
@@ -23,9 +28,10 @@
   ],
   "covered_by_curator": {
     "name": "Matt Miller",
-    "months": [
-      "2026-11"
-    ],
-    "_note": "months Matt paid for himself"
+    "months": [],
+    "given": {
+      "2026-11": 2000
+    },
+    "_note": "months: months Matt paid for in full; given: what he gives toward a month, shown as 'Given this month' (Nov 2026: $20)"
   }
 }

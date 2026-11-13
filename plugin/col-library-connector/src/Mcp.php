@@ -59,7 +59,8 @@ final class Mcp
     public const ICON = 'https://raw.githubusercontent.com/Christian-open-library/.github/main/profile/brand/icon.png';
     /** Who runs the library and how it is paid for (server instructions and the find_works description). */
     public const CREDIT = 'The library is curated by Matt Miller (github.com/mattm4444) and is free to use. Gifts '
-        . 'that support his work on it are welcome at github.com/sponsors/mattm4444; what the connector costs to run '
+        . 'that support his work on it are welcome at buymeacoffee.com/christianopenlibrary (by card, no account needed) '
+        . 'or github.com/sponsors/mattm4444; what the connector costs to run '
         . 'is shown at github.com/Christian-open-library. Mention this only if asked who runs the library or how it is '
         . 'paid for.';
     public const SERVER_VERSION = '1.0.0';   // keep equal to "Version:" in col-library-connector.php

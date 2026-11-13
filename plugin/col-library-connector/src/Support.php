@@ -14,11 +14,17 @@
  *    A cost's kind is "fixed" (monthly), "once" or "metered" (by use). A coming month's given_cents
  *    is what monthly sponsors give.
  * Arithmetic (the card makes no promise about how gifts are spent: they go to the curator personally):
- * a month the curator covers (covered_by) needs no gifts, so its gifts count toward later months;
+ * a month the curator covers (covered_by) needs no gifts, so its gifts count toward later months; a month
+ * he covers in part (covered_cents, without covered_by) needs gifts only for the rest;
  * otherwise gifts beyond a month's costs count toward later months, and a shortfall is not carried.
  * A coming month costs its fixed and one-time costs plus its expected usage: the highest of the month
  * before this one, this month's pace and the last 7 days' pace, with Voyage's free tokens used first.
  * So when many more people start using the connector, the coming months' costs rise within days.
+ * The funding object may also plan for more use than measured: "plan": {"rerank_per_day": 40000000,
+ * "people": "hundreds of people"} makes each coming month expect at least that many search tokens a day
+ * (deploy/costs.json planned_use); the card doesn't say so (Matt, 2026-11-12).
+ * This month adds the rest of the month at that same expected pace ("Rest of November (expected)"), so
+ * its costs and what is still needed are what the whole month is expected to cost.
  */
 
 namespace ColLibrary;
@@ -84,8 +90,9 @@ final class Support
      * @param array<string, array<int, int>> $spending RateLimit::spending()
      * @param array<string, int> $recent RateLimit::recentSpending()
      * @return array{month: string, items: list<array{0: string, 1: int}>, costs: int, given: int,
-     *   carried: int, covered_by: ?string, capped: int,
-     *   ahead: list<array{month: string, costs: int, pct: int, covered_by: ?string}>, through: ?string}
+     *   carried: int, covered_by: ?string, covered: int, capped: int, rest: int,
+     *   ahead: list<array{month: string, costs: int, pct: int, covered_by: ?string}>, through: ?string,
+     *   plan: ?string}
      *   through: the last month of the unbroken run of fully funded months from next month on
      */
     public static function ledger(array $funding, array $spending, int $now, array $recent = []): array
@@ -137,12 +144,14 @@ final class Support
             if ($m === $current) {
                 $result = ['month' => $m, 'items' => $items, 'costs' => $costs, 'given' => $row['given'],
                            'carried' => $carry, 'covered_by' => $row['covered_by'],
+                           'covered' => $row['covered'],
                            'capped' => (int) ($spending['capped'][$ym] ?? 0)];
                 $thisMonth = $use;
             } else {
                 $before = $use;
             }
-            $carry = $row['covered_by'] !== null ? $carry + $row['given'] : max(0, $carry + $row['given'] - $costs);
+            $carry = $row['covered_by'] !== null ? $carry + $row['given']
+                : max(0, $carry + $row['given'] - max(0, $costs - $row['covered']));
         }
         $days = (int) gmdate('t', $now);
         $scale = $days / max(1.0, ($now - (int) strtotime("$current-01 00:00:00 UTC")) / 86400);
@@ -150,7 +159,29 @@ final class Support
         foreach ($before as $k => $v) {
             $expect[$k] = (int) ceil(max($v, $thisMonth[$k] * $scale, ($recent[$k] ?? 0) * $days / 7));
         }
+        $plan = is_array($funding['plan'] ?? null) ? $funding['plan'] : [];
+        $perDay = is_int($plan['rerank_per_day'] ?? null) ? max(0, min($plan['rerank_per_day'], 1_000_000_000)) : 0;
+        $expect['rerank'] = max($expect['rerank'], $perDay * $days);
+        $people = is_string($plan['people'] ?? null) && $perDay > 0 && trim($plan['people']) !== ''
+            ? mb_substr(trim($plan['people']), 0, 40) : null;
         $free = max(0, self::FREE['rerank'] - $rerankSoFar);
+
+        // The rest of this month at the expected pace, then this month's carry again with it.
+        $left = max(0.0, ((int) strtotime(self::next($current) . '-01 00:00:00 UTC') - $now) / 86400) / $days;
+        $rerankLeft = (int) ceil($expect['rerank'] * $left);
+        $rest = (int) round($expect['other'] * $left + $expect['embed'] * $left / 1e6 * self::PRICE['embed']
+            + max(0, $rerankLeft - $free) / 1e6 * self::PRICE['rerank']);
+        $free = max(0, $free - $rerankLeft);
+        if ($result !== []) {
+            if ($rest > 0) {
+                $result['items'][] = ['Rest of ' . gmdate('F', $now) . ' (expected)', $rest];
+                $result['costs'] += $rest;
+            }
+            $result['rest'] = $rest;
+            $result['covered'] = min($result['covered'], $result['costs']);
+            $carry = $result['covered_by'] !== null ? $result['carried'] + $result['given']
+                : max(0, $result['carried'] + $result['given'] - ($result['costs'] - $result['covered']));
+        }
 
         // The coming months: what homebox sent, then its last coming month again (fixed costs only).
         // The projection runs past the shown months only while every month is fully funded.
@@ -165,7 +196,7 @@ final class Support
                 $row = $last = $rows[$m];
             } else {
                 $base = $last ?? ($rows[$current] ?? self::month([]));
-                $row = ['given' => $last['given'] ?? 0, 'covered_by' => null,
+                $row = ['given' => $last['given'] ?? 0, 'covered_by' => null, 'covered' => 0,
                         'costs' => array_values(array_filter($base['costs'], static fn (array $c): bool => $c[2] === 'fixed'))];
             }
             $billable = max(0, $expect['rerank'] - $free);
@@ -179,9 +210,9 @@ final class Support
                 $pct = 100;
                 $carry += $row['given'];
             } else {
-                $have = $carry + $row['given'];
+                $have = $carry + $row['given'] + min($row['covered'], $costs);
                 $pct = $costs > 0 ? min(100, intdiv(100 * $have, $costs)) : 100;
-                $carry = max(0, $have - $costs);
+                $carry = max(0, $carry + $row['given'] - max(0, $costs - $row['covered']));
             }
             if ($i <= self::AHEAD) {
                 $ahead[] = ['month' => $m, 'costs' => $costs, 'pct' => $pct, 'covered_by' => $row['covered_by']];
@@ -191,7 +222,7 @@ final class Support
                 $through = $m;
             }
         }
-        return $result + ['ahead' => $ahead, 'through' => $through];
+        return $result + ['ahead' => $ahead, 'through' => $through, 'plan' => $people];
     }
 
     /** The card as SVG for one ledger (see ledger()). */
@@ -203,14 +234,15 @@ final class Support
         $right = $w - self::PAD;
         $month = self::name($l['month']);
         $covered = $l['covered_by'] !== null;
-        $have = $l['given'] + $l['carried'];
+        $part = $covered ? 0 : (int) ($l['covered'] ?? 0);
+        $have = $l['given'] + $l['carried'] + $part;
         $pct = $covered ? 100 : ($l['costs'] > 0 ? min(100, intdiv(100 * $have, $l['costs'])) : 100);
         if ($covered) {
             $status = explode(' ', $month)[0] . ' is covered.';
         } elseif ($have >= $l['costs']) {
             $status = 'Funded. Thank you!';
         } else {
-            $status = $pct . '% funded';
+            $status = $pct . '% funded, ' . self::money($l['costs'] - $have) . ' still needed';
         }
 
         $out = [];
@@ -221,10 +253,11 @@ final class Support
         }
         $out[] = "<line x1=\"$x\" y1=\"" . ($y - 16) . "\" x2=\"$right\" y2=\"" . ($y - 16) . '" class="rule"/>';
         $y += 8;
-        $out[] = self::line($x, $right, $y, 'Costs this month', self::money($l['costs']), 'total');
+        $out[] = self::line($x, $right, $y, ($l['rest'] ?? 0) > 0 ? 'Costs this month (expected)' : 'Costs this month',
+            self::money($l['costs']), 'total');
         $y += self::ROW;
-        if ($covered) {
-            $out[] = self::line($x, $right, $y, 'Covered', self::money($l['costs']), 'given');
+        if ($covered || $part > 0) {
+            $out[] = self::line($x, $right, $y, 'Covered', self::money($covered ? $l['costs'] : $part), 'given');
             $y += self::ROW;
         }
         if (!$covered || $l['given'] > 0) {
@@ -272,7 +305,8 @@ final class Support
         $h = $y + 26;
 
         $summary = "Keep it running, $month: costs " . self::money($l['costs'])
-            . ($covered ? ', covered' : ', given ' . self::money($l['given'])
+            . ($covered ? ', covered' : ($part > 0 ? ', covered ' . self::money($part) : '')
+                . ', given ' . self::money($l['given'])
                 . ($l['carried'] > 0 ? ', carried ' . self::money($l['carried']) : '') . ", $status")
             . '. Coming up: ' . implode('; ', array_map(static fn (array $a): string => self::name($a['month'])
                 . ' about ' . self::money($a['costs']) . ', ' . $a['pct'] . '% funded', $l['ahead'])) . '.';
@@ -310,7 +344,7 @@ final class Support
 SVG;
     }
 
-    /** @return array{given: int, covered_by: ?string, costs: list<array{0: string, 1: int, 2: string}>} */
+    /** @return array{given: int, covered_by: ?string, covered: int, costs: list<array{0: string, 1: int, 2: string}>} */
     private static function month(array $row): array
     {
         $costs = [];
@@ -323,6 +357,7 @@ SVG;
         $by = $row['covered_by'] ?? null;
         return ['given' => is_int($row['given_cents'] ?? null) ? max(0, $row['given_cents']) : 0,
                 'covered_by' => is_string($by) && trim($by) !== '' ? mb_substr(trim($by), 0, 24) : null,
+                'covered' => is_int($row['covered_cents'] ?? null) ? max(0, $row['covered_cents']) : 0,
                 'costs' => $costs];
     }
 

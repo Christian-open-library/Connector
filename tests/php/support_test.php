@@ -40,11 +40,11 @@ function test_searches_are_priced_after_the_free_rerank_tokens(): void
 {
     $spending = ['rerank' => [202611 => 150_000_000, 202612 => 100_000_000], 'embed' => [202612 => 10_000_000]];
     $nov = Support::ledger([], $spending, NOV_15);
-    assert_same([[Support::SEARCH_LABEL, 0]], $nov['items'], 'within the free tokens');
+    assert_same([Support::SEARCH_LABEL, 0], $nov['items'][0], 'within the free tokens');
     $dec = Support::ledger([], $spending, DEC_02);
     // 50M of December's rerank tokens are past the free 200M (250 cents), plus 10M embedding tokens (20).
-    assert_same([[Support::SEARCH_LABEL, 270]], $dec['items']);
-    assert_same(270, $dec['costs']);
+    assert_same([Support::SEARCH_LABEL, 270], $dec['items'][0]);
+    assert_same(270 + $dec['rest'], $dec['costs']);
 }
 
 function test_gifts_beyond_the_costs_carry_forward_and_a_shortfall_does_not(): void
@@ -231,14 +231,19 @@ function test_coming_months_follow_the_last_week_and_the_free_tokens_running_out
     // The last 7 days used 70M: 310M a month at December's 31 days, far above the other measures.
     $spending = ['rerank' => [202611 => 190_000_000, 202612 => 2_000_000]];
     $l = Support::ledger(fixed_months(), $spending, DEC_02, ['rerank' => 70_000_000]);
-    assert_same([[Support::SEARCH_LABEL, 0], ['Domain name', 87], ['Electricity (estimate)', 250]], $l['items'],
-        'December so far is within the free tokens');
-    // January: 302M billable at 5 cents per million, plus $3.37; after that all 310M are billed.
-    assert_same([['2027-01', 1847], ['2027-02', 1887], ['2027-03', 1887]],
+    // December so far is within the free tokens; the rest of December (29.5 of 31 days) expects 295M,
+    // 287M of them past the free tokens.
+    assert_same([[Support::SEARCH_LABEL, 0], ['Domain name', 87], ['Electricity (estimate)', 250],
+                 ['Rest of December (expected)', 1435]], $l['items']);
+    assert_same(337 + 1435, $l['costs']);
+    assert_contains('Costs this month (expected)', Support::card($l, 'dark'));
+    // From January all 310M are billed, plus $3.37.
+    assert_same([['2027-01', 1887], ['2027-02', 1887], ['2027-03', 1887]],
         array_map(static fn (array $a): array => [$a['month'], $a['costs']], $l['ahead']));
-    // Without the busy week, the coming months follow November's 190M (no free tokens left after January).
+    // Without the busy week, the months follow November's 190M.
     $l = Support::ledger(fixed_months(), $spending, DEC_02);
-    assert_same([337 + 910, 337 + 950, 337 + 950], array_column($l['ahead'], 'costs'));
+    assert_same(864, $l['rest']);
+    assert_same([337 + 950, 337 + 950, 337 + 950], array_column($l['ahead'], 'costs'));
 }
 
 function test_card_says_when_the_daily_limit_was_reached(): void
@@ -249,4 +254,46 @@ function test_card_says_when_the_daily_limit_was_reached(): void
     $l = Support::ledger(fixed_months(), ['capped' => [202611 => 1]], NOV_15);
     assert_contains('on 1 day this month.', Support::card($l, 'dark'));
     assert_not_contains('daily spending limit', Support::card(Support::ledger(fixed_months(), [], NOV_15), 'dark'));
+}
+
+function test_coming_months_plan_for_the_planned_use(): void
+{
+    // 40M rerank tokens a day: 1,240M in a 31-day month. The rest of December (1,180M) uses the 200M
+    // free tokens: 980M billed.
+    $f = fixed_months() + ['plan' => ['rerank_per_day' => 40_000_000, 'people' => 'hundreds of people']];
+    $l = Support::ledger($f, [], DEC_02);
+    assert_same(4900, $l['rest']);
+    assert_same(337 + 4900, $l['costs']);
+    assert_same([337 + 6200, 337 + 6200, 337 + 6200], array_column($l['ahead'], 'costs'));
+    assert_same('hundreds of people', $l['plan']);
+    assert_not_contains('Planned for', Support::card($l, 'light'));
+    // Measured use above the plan still wins; a bad or empty plan is ignored.
+    $l = Support::ledger($f, [], DEC_02, ['rerank' => 700_000_000]);
+    assert_true($l['ahead'][1]['costs'] > 337 + 6200);
+    foreach ([['rerank_per_day' => '40000000', 'people' => 'x'], ['rerank_per_day' => 0, 'people' => 'x'], 'plan'] as $bad) {
+        $l = Support::ledger(fixed_months() + ['plan' => $bad], [], DEC_02);
+        assert_same(null, $l['plan']);
+        assert_same([337, 337, 337], array_column($l['ahead'], 'costs'));
+    }
+}
+
+function test_a_month_covered_in_part_asks_gifts_for_the_rest(): void
+{
+    $f = fixed_months([]);
+    $f['months']['2026-11']['covered_cents'] = 1000;   // November costs $14.23: $10 covered, $4.23 to go
+    $f['months']['2026-11']['given_cents'] = 300;
+    $l = Support::ledger($f, [], NOV_15);
+    assert_same([null, 1000, 1423], [$l['covered_by'], $l['covered'], $l['costs']]);
+    $svg = Support::card($l, 'dark');
+    assert_contains('>Covered</text>', $svg);
+    assert_contains('>$10.00</text>', $svg);
+    assert_contains('91% funded, $1.23 still needed', $svg);
+    // $5 given: $0.77 beyond the rest goes to December; covering more than the costs carries nothing.
+    $f['months']['2026-11']['given_cents'] = 500;
+    assert_same(22, Support::ledger($f, [], NOV_15)['ahead'][0]['pct']);
+    $f['months']['2026-11']['covered_cents'] = 99_999;
+    $f['months']['2026-11']['given_cents'] = 0;
+    $l = Support::ledger($f, [], NOV_15);
+    assert_same([1423, 0], [$l['covered'], $l['ahead'][0]['pct']]);
+    assert_contains('Funded. Thank you!', Support::card($l, 'dark'));
 }
