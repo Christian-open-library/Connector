@@ -6,10 +6,13 @@
  *    BEGIN IMMEDIATE transaction, so concurrent requests cannot all pass the check), and the
  *    reservation is then corrected to the tokens actually used (adjustVoyage). A request that
  *    fails or times out keeps its reservation: it may have been billed.
- * All callers share one set of counters. A personal link (Links) also has its own per-minute and
- * per-day call counters (link_minute:<id>, link_day:<id>), checked first, and may use at most a fifth
- * of the daily Voyage budget (link_voyage:<id>), so one link cannot switch off meaning search for
- * everyone (THREAT-MODEL.md, T1).
+ * All callers share one set of counters. A personal link or signed-in account (Links, OAuth) also has
+ * its own per-minute and per-day call counters (link_minute:<id>, link_day:<id>), checked first, and its
+ * own daily re-ranking allowance (link_voyage:<id>): max_voyage_tokens_per_person_per_day, never more
+ * than a fifth of the shared budget. So one person cannot switch off meaning search for everyone
+ * (THREAT-MODEL.md, T1), and the shared budget is spread over many people (2026-11-13). Only re-ranking
+ * (the costly step) is refused at the person's limit: query embeddings cost a few tokens, so meaning
+ * search keeps working for them, without re-ranking, until 00:00 UTC.
  *
  * Failure policy if the state database cannot be used: tool calls are allowed (the library keeps
  * working) and Voyage is refused (no spending that is not counted). Both cases are logged.
@@ -33,8 +36,13 @@ final class RateLimit
     private const SPEND_DAY = 'voyage_day:';
     /** Marks a UTC day on which the shared daily Voyage budget ran out (so it is counted once). */
     private const CAPPED_DAY = 'voyage_capped';
-    /** A personal link's share of the daily Voyage budget: 1 / LINK_VOYAGE_DIVISOR. */
+    /** A person's allowance is at most this fraction of the daily Voyage budget: 1 / LINK_VOYAGE_DIVISOR. */
     public const LINK_VOYAGE_DIVISOR = 5;
+    /** Default max_voyage_tokens_per_person_per_day: about 90 re-ranked searches. */
+    public const PERSON_VOYAGE_DEFAULT = 1_000_000;
+
+    /** Why the last reserveVoyage() refused: 'person', 'pool' or 'shared' (null if it did not refuse). */
+    public ?string $lastRefusal = null;
 
     private ?\PDO $db = null;
 
@@ -49,6 +57,7 @@ final class RateLimit
         private readonly ?Log $log = null,
         private readonly ?\Closure $clock = null,
         private readonly ?array $link = null,
+        private readonly int $personVoyageTokensPerDay = self::PERSON_VOYAGE_DEFAULT,
     ) {
     }
 
@@ -63,6 +72,7 @@ final class RateLimit
             $log,
             null,
             $link,
+            $config->maxVoyageTokensPerPersonPerDay(),
         );
     }
 
@@ -170,32 +180,39 @@ final class RateLimit
     /**
      * Reserves about $estimatedTokens of today's Voyage budget before a request is sent: checks
      * and adds in one write transaction. False (refuse Voyage) when the budget has no room or the
-     * reservation cannot be written.
+     * reservation cannot be written; $lastRefusal then says which limit refused. $personLimit false
+     * (query embeddings) still counts the tokens against the person but is not refused by their
+     * allowance, only by the pool and shared budgets.
      */
-    public function reserveVoyage(int $estimatedTokens): bool
+    public function reserveVoyage(int $estimatedTokens, bool $personLimit = true): bool
     {
+        $this->lastRefusal = null;
         if ($this->voyageTokensPerDay <= 0) {
+            $this->lastRefusal = 'shared';
             return false;
         }
         $estimate = max(1, $estimatedTokens);
         $day = intdiv($this->now(), 86400);
         try {
-            return $this->write(function (\PDO $db) use ($estimate, $day): bool {
+            return $this->write(function (\PDO $db) use ($estimate, $day, $personLimit): bool {
                 if ($this->value($db, self::VOYAGE_DAY, $day) + $estimate > $this->voyageTokensPerDay) {
                     if ($this->value($db, self::CAPPED_DAY, $day) === 0) {
                         $this->add($db, self::CAPPED_DAY, $day, 1);
                         $this->add($db, self::SPEND . 'capped', (int) gmdate('Ym', $this->now()), 1);
                     }
+                    $this->lastRefusal = 'shared';
                     return false;
                 }
-                if ($this->link !== null) {
+                if ($this->link !== null && $personLimit) {
                     if ($this->value($db, $this->linkVoyageName(), $day) + $estimate > $this->linkVoyageMax()) {
+                        $this->lastRefusal = 'person';
                         return false;
                     }
                 }
                 if (($pool = $this->pool()) !== null
                     && $this->value($db, 'pool_voyage:' . $pool[0], $day) + $estimate
                         > max(1, (int) floor($this->voyageTokensPerDay * $pool[1]))) {
+                    $this->lastRefusal = 'pool';
                     return false;
                 }
                 if ($this->link !== null) {
@@ -209,6 +226,7 @@ final class RateLimit
             });
         } catch (\Throwable $e) {
             $this->log?->error('ratelimit_unavailable', ['op' => 'reserveVoyage', 'error' => $e->getMessage()]);
+            $this->lastRefusal = 'shared';
             return false;
         }
     }
@@ -340,10 +358,13 @@ final class RateLimit
         return 'link_voyage:' . $this->link['id'];
     }
 
-    /** Tokens per UTC day one personal link may reserve (at least 1, so the check stays meaningful). */
+    /**
+     * Tokens per UTC day one person (link or account) may reserve for re-ranking: their allowance, never
+     * more than a fifth of the shared budget (at least 1, so the check stays meaningful).
+     */
     private function linkVoyageMax(): int
     {
-        return max(1, intdiv($this->voyageTokensPerDay, self::LINK_VOYAGE_DIVISOR));
+        return max(1, min($this->personVoyageTokensPerDay, intdiv($this->voyageTokensPerDay, self::LINK_VOYAGE_DIVISOR)));
     }
 
     private function now(): int

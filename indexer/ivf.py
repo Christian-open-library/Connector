@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .embed import DIMS, DOC_MODEL, QUERY_MODEL, cache_key, iter_inputs, open_cache
+from .embed import DIMS, DOC_MODEL, QUERY_MODEL, fill, input_keys, iter_inputs, open_cache, save_flat
 
 RERANK_MODEL = 'rerank-3'
 FAKE_TOKEN_RE = re.compile(r'[a-z]+')
@@ -35,23 +35,22 @@ def fake_embed(text: str, dims: int) -> np.ndarray:
     return v / n if n else v
 
 
-def load_vectors(build_dir: Path, model: str, dims: int, fake: bool):
-    src = sqlite3.connect(build_dir / 'embed_inputs.sqlite')
-    n = src.execute('SELECT count(*) FROM inputs').fetchone()[0]
-    src.close()
-    ids = np.zeros(n, dtype=np.int64)
-    X = np.zeros((n, dims), dtype=np.float16)
-    cache = None if fake else open_cache()
-    for i, (pid, text) in enumerate(iter_inputs(build_dir)):
-        ids[i] = pid
-        if fake:
+def load_vectors(build_dir: Path, model: str, dims: int, fake: bool, save: bool = False):
+    """(passage ids, float16 matrix) in id order. save: keep the vectors as the flat store (full builds)."""
+    if fake:
+        rows = list(iter_inputs(build_dir))
+        ids = np.array([pid for pid, _ in rows], dtype=np.int64)
+        X = np.zeros((len(rows), dims), dtype=np.float16)
+        for i, (_, text) in enumerate(rows):
             X[i] = fake_embed(text, dims)
-        else:
-            row = cache.execute('SELECT v FROM vec WHERE key=?', (cache_key(model, dims, text),)).fetchone()
-            if row is None:
-                raise SystemExit(f'P{pid} has no cached embedding: run python -m indexer.embed {build_dir}')
-            X[i] = np.frombuffer(row[0], dtype=np.float16)
-    return ids, X
+        return ids, X
+    pids, keys = input_keys(build_dir, model, dims)
+    X, absent = fill(keys, dims, open_cache())
+    if absent:
+        raise SystemExit(f'P{pids[absent[0]]} has no cached embedding: run python -m indexer.embed {build_dir}')
+    if save:
+        save_flat(keys, X, dims)
+    return np.array(pids, dtype=np.int64), X
 
 
 def kmeans(X: np.ndarray, k: int, sample: int, iters: int, seed: int = 7) -> np.ndarray:
@@ -104,9 +103,9 @@ def write_manifest(build_dir: Path) -> dict:
 
 
 def build(build_dir: Path, fake: bool, k: int, sample: int, iters: int,
-          model: str = DOC_MODEL, dims: int = DIMS):
+          model: str = DOC_MODEL, dims: int = DIMS, save_flat: bool = False):
     t0 = time.time()
-    ids, X = load_vectors(build_dir, model, dims, fake)
+    ids, X = load_vectors(build_dir, model, dims, fake, save=save_flat and not fake)
     n = len(ids)
     k = max(1, min(k, n // 40))
     print(f'{n} vectors loaded in {time.time() - t0:.0f}s; clustering into {k} lists', flush=True)

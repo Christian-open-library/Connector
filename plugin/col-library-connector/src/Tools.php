@@ -370,7 +370,8 @@ final class Tools
         $store = new Store($ctx->config->dataDir());
         $keep = $ctx->config->get('vector_prefilter_keep', 1.0);
         $search = new Search($store, Voyage::forBuild($ctx, $store), $ctx->deadline, $ctx->config->nprobe(),
-            $ctx->log, (is_float($keep) || is_int($keep)) && $keep > 0 && $keep <= 1 ? (float) $keep : 1.0);
+            $ctx->log, (is_float($keep) || is_int($keep)) && $keep > 0 && $keep <= 1 ? (float) $keep : 1.0,
+            Search::EXACT_SCAN_MAX, $ctx->config->rerankCandidates(), $ctx->config->rerankDocChars());
         if ($mode === 'exact') {
             $result = $search->exact($query, $filters, $limit, $offset);
         } else {
@@ -430,7 +431,8 @@ final class Tools
         $text = self::string($args, 'quote', Quote::MAX_CHARS, true);
         $author = self::string($args, 'author', 100);
         $store = new Store($ctx->config->dataDir());
-        $check = new Quote($store, Voyage::forBuild($ctx, $store), $ctx->deadline, $ctx->config->nprobe(), $ctx->log);
+        $check = new Quote($store, Voyage::forBuild($ctx, $store), $ctx->deadline, $ctx->config->nprobe(), $ctx->log,
+            $ctx->config->rerankCandidates(), $ctx->config->rerankDocChars());
         $result = $check->check($text, $author);
         $ctx->log->debug('check_quote', ['query' => $text, 'credited' => $author !== null, 'verdict' => $result->verdict,
             'matches' => count($result->matches), 'ms' => (int) round((microtime(true) - $t0) * 1000)] + $check->trace);

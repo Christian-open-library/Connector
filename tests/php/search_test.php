@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace ColLibraryTest\Search;
 
 use ColLibrary\Filters;
+use ColLibrary\RateLimit;
 use ColLibrary\Search;
 use ColLibrary\SearchInputException;
 use ColLibrary\Store;
@@ -439,4 +440,34 @@ function test_build_without_vectors(): void
     $r = (new Search($store, Fixture\fake_voyage($store), microtime(true) + 25, 2))->best('faith', new Filters(), 5);
     assert_same('keyword search, re-ranked', $r->method);
     assert_contains(Search::MEANING_DOWN, implode(' ', $r->notes));
+}
+
+function test_rerank_candidates_and_doc_chars_are_settings(): void
+{
+    $calls = [];
+    $store = Fixture\store_or_skip(Fixture\REALMODE_DIR);
+    $s = new Search($store, Fixture\real_voyage($store, Fixture\voyage_like($calls)), microtime(true) + 25, 2,
+        null, 1.0, Search::EXACT_SCAN_MAX, 4, 300);
+    $r = $s->best('faith', new Filters(), 5);
+    $rerank = array_values(array_filter($calls, fn (array $c): bool => $c['path'] === '/rerank'));
+    assert_same(1, count($rerank));
+    assert_true(count($rerank[0]['body']['documents']) <= 4, 'at most 4 passages re-ranked');
+    foreach ($rerank[0]['body']['documents'] as $d) {
+        assert_true(mb_strlen($d) <= 300, 'each passage cut to 300 characters');
+    }
+    assert_true(count($r->hits) >= 4, 'passages past the re-ranked ones still appear, in fused order');
+}
+
+function test_past_the_personal_allowance_search_keeps_meaning_but_not_reranking(): void
+{
+    $calls = [];
+    $store = Fixture\store_or_skip(Fixture\REALMODE_DIR);
+    $limits = new RateLimit(col_tmpdir('rl'), 100000, 1000000, 3_000_000, null, fn () => Fixture\FIXED_TIME,
+        ['id' => 'la00001', 'calls_per_day' => 500, 'calls_per_minute' => 30], 100);
+    $s = new Search($store, Fixture\real_voyage($store, Fixture\voyage_like($calls), $limits), microtime(true) + 25, 2);
+    $r = $s->best('the chief end of man', new Filters(), 5);
+    assert_same(['/embeddings'], array_column($calls, 'path'), 'the query is embedded; no rerank is sent');
+    assert_same('meaning + keyword search', $r->method);
+    assert_contains('used today\'s re-ranked searches', implode(' ', $r->notes));
+    assert_true($r->hits !== []);
 }

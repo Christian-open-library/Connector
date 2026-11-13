@@ -16,12 +16,13 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import corpus
+from . import buildcache, corpus
 from .modernize import Modernizer, load_lexicon, pre_markdown
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -59,10 +60,12 @@ CREATE TABLE ivf(cluster INTEGER PRIMARY KEY, centroid BLOB NOT NULL,
 _worker: dict = {}
 
 
-def _init_worker(repo: str, lexicon_path: str, licensed: str | None = None):
+def _init_worker(repo: str, lexicon_path: str, licensed: str | None = None, version: str = ''):
     # Each work's files are read from its own root: the books repo, or the licensed shelf.
     _worker['roots'] = {'': Path(repo), 'licensed': Path(licensed) if licensed else None}
     _worker['mod'] = Modernizer(load_lexicon(Path(lexicon_path)))
+    _worker['version'] = version        # '' = no cache (sample builds, LIBRARY_BUILD_CACHE=off)
+    _worker['store'] = None
 
 
 def header_text(work: corpus.Work, section: str) -> str:
@@ -85,12 +88,25 @@ def embed_input(work: corpus.Work, section: str, search_text: str) -> str:
 
 
 def _process(work: corpus.Work):
-    """Worker: chunk one work and prepare rows. Returns (work, rows, used_spellings, dropped), or
-    (work, None, error message, 0) when the work cannot be read: it is then left out of the build."""
+    """Worker: chunk one work and prepare rows. Returns (work, rows, used_spellings, dropped, cache key,
+    from cache?, packed rows for the cache or None), or (work, None, error message, 0, '', False, None) when
+    the work cannot be read: it is then left out of the build. With the per-work cache (indexer.buildcache)
+    an unchanged work's rows come from it; a changed work's rows are packed here, not in the busy main process."""
+    key = ''
     try:
-        return _process_work(work)
+        if _worker.get('version'):
+            root = _worker['roots'].get(work.root)
+            if root is not None:            # (an unknown root is reported by _process_work)
+                key = buildcache.work_key(_worker['version'], root, work)
+                if _worker['store'] is None:
+                    _worker['store'] = buildcache.open_store(readonly=True)
+                hit = buildcache.get(_worker['store'], 'parsed', key)
+                if hit is not None:
+                    return (work, *hit, key, True, None)
+        out = _process_work(work)
+        return (*out, key, False, buildcache.pack(out[1:]) if key else None)
     except Exception as e:      # UnicodeDecodeError, an unsafe part file, too many passages, ...
-        return work, None, f'{type(e).__name__}: {str(e)[:200]}', 0
+        return work, None, f'{type(e).__name__}: {str(e)[:200]}', 0, '', False, None
 
 
 def _process_work(work: corpus.Work):
@@ -148,6 +164,16 @@ def add_church_bodies(db: sqlite3.Connection, repo: Path, licensed: Path | None 
     print(f'  church records: {n_records} works, {len(bodies)} bodies, {len(names)} present-day names', flush=True)
 
 
+def _released(results, window, stop):
+    """Yields results, freeing a place in the window for each; stops the feeder when the loop ends."""
+    try:
+        for res in results:
+            window.release()
+            yield res
+    finally:
+        stop.set()
+
+
 def repo_commit(repo: Path) -> str:
     try:
         return subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True,
@@ -159,12 +185,18 @@ def repo_commit(repo: Path) -> str:
 IDS_PATH = DATA / 'work_ids.json'
 
 
-def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3, licensed: Path | None = None) -> Path:
+def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3, licensed: Path | None = None,
+          use_cache: bool = False) -> Path:
     """Builds library.sqlite in out_dir, from the books repo and, when given, the licensed shelf (works used by
     permission; corpus.licensed_works). The work-id map (new works get new ids) is written to
     out_dir/work_ids.json only; save_ids() makes it the persistent map once the build has passed
-    its checks, so a failed or refused build never uses up ids."""
+    its checks, so a failed or refused build never uses up ids. use_cache: take unchanged works' rows from the
+    per-work cache (indexer.buildcache; full nightly builds only, as it keeps just the works of the last build)."""
     t0 = time.time()
+    # The commits are read before any file: one made while the build runs (another session can commit to the
+    # licensed shelf at any time) must not be credited to this build, or the next nightly would skip it.
+    commit = repo_commit(repo)
+    licensed_commit = repo_commit(licensed) if licensed is not None else ''
     rows = corpus.valid_rows(repo, corpus.load_catalog(repo))
     ids = corpus.assign_work_ids(rows, corpus.load_work_ids(IDS_PATH))
     works = sorted(corpus.iter_works(repo, ids, rows), key=lambda w: w.id)
@@ -196,14 +228,37 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3, l
     used_total: dict = {}
     n_pass = n_drop = 0
     lex_path = DATA / 'lexicon.tsv'
+    use_cache = use_cache and not limit_works and buildcache.enabled()
+    store = buildcache.open_store() if use_cache else None
+    version = buildcache.code_version() if use_cache else ''
+    used_keys: set = set()
+    n_hits = 0
     with mp.Pool(processes, initializer=_init_worker,
-                 initargs=(str(repo), str(lex_path), str(licensed) if licensed else None)) as pool:
+                 initargs=(str(repo), str(lex_path), str(licensed) if licensed else None, version)) as pool:
         n_skipped = 0
-        for i, (work, prow, used, dropped) in enumerate(pool.imap(_process, works, chunksize=2), 1):
+        # At most a few works in flight: imap alone queues every finished work in this process when it falls
+        # behind the workers, which ran the homebox out of memory (2.7 GB) in a cold cached build.
+        window, stop = threading.Semaphore(processes * 4), threading.Event()
+
+        def feed():
+            for w in works:
+                while not window.acquire(timeout=1):
+                    if stop.is_set():
+                        return
+                yield w
+        # (_released sets stop when the loop ends, also on an error, so the pool's feeder thread never hangs)
+        results = _released(pool.imap(_process, feed(), chunksize=1), window, stop)
+        for i, (work, prow, used, dropped, key, hit, blob) in enumerate(results, 1):
             if prow is None:
                 corpus.warn(f'work skipped ({used!r}): {work.key!r}')
                 n_skipped += 1
                 continue
+            if key:
+                used_keys.add(key)
+                if hit:
+                    n_hits += 1
+                elif blob is not None:
+                    buildcache.put_packed(store, 'parsed', key, blob)
             n_drop += dropped
             db.executemany('INSERT INTO passages(id, work_id, seq, part, page_start, page_end, section,'
                            ' text, notes, words) VALUES (?,?,?,?,?,?,?,?,?,?)', [r[:10] for r in prow])
@@ -227,9 +282,17 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3, l
             if i % 100 == 0:
                 db.commit()
                 emb.commit()
+                if store is not None:
+                    store.commit()
                 print(f'  {i}/{len(works)} works, {n_pass} passages, {time.time() - t0:.0f}s', flush=True)
     db.commit()
     emb.commit()
+    if store is not None:
+        store.commit()
+        dropped_keys = buildcache.prune(store, 'parsed', used_keys)
+        store.close()
+        print(f'  per-work cache: {n_hits} of {len(works)} works unchanged, {dropped_keys} old entries dropped '
+              f'({time.time() - t0:.0f}s)', flush=True)
 
     db.execute("INSERT INTO works_fts(works_fts) VALUES('rebuild')")
     # Who each author was (the repo's authors.csv), for the authors this build holds.
@@ -250,12 +313,12 @@ def build(repo: Path, out_dir: Path, limit_works: int = 0, processes: int = 3, l
     meta = {
         'build_id': build_id,
         'built_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
-        'repo_commit': repo_commit(repo),
+        'repo_commit': commit,
         'chunker_version': str(corpus.CHUNKER_VERSION),
         'n_works': str(len(works) - n_skipped),
         'n_passages': str(n_pass),
         'n_dropped_ocr': str(n_drop),
-        'licensed_commit': repo_commit(licensed) if licensed is not None else '',
+        'licensed_commit': licensed_commit,
         'n_licensed_works': str(n_licensed),
     }
     db.executemany('INSERT INTO meta(key, value) VALUES (?,?)', meta.items())

@@ -59,17 +59,22 @@ case "${1:-}" in
     # Text aimed at an AI (THREAT-MODEL.md, T3): every passage reaches someone's AI chat, so a build with an
     # unreviewed hit is not deployed. Reviewed false positives: indexer/injection-allow.tsv. Book text in the
     # output is printed without control characters.
+    echo "--- $(date +%H:%M:%S) injection check"
     if ! scan=$(.venv/bin/python -m indexer.injection "$dir" 2>&1); then
         printf '%s\n' "$scan" | head -n 40 | tr -d '\000-\010\013-\037\177' >&2
         echo "the injection check found text aimed at an AI in $id; nothing was deployed" >&2; exit 1
     fi
     echo "injection check: $(printf '%s\n' "$scan" | grep -c '^allowed') allowed hit(s), none new"
-    rsync -t --partial --info=progress2 -e "${SSH[*]}" "$dir/manifest.json" "$dir/library.sqlite" "$dir/vectors.bin" \
+    echo "--- $(date +%H:%M:%S) upload"
+    # zstd on the wire: about 20% fewer bytes (the office rsync decompresses; no change needed there)
+    rsync -t --partial --info=progress2 -z --compress-choice=zstd --compress-level=3 -e "${SSH[*]}" "$dir/manifest.json" "$dir/library.sqlite" "$dir/vectors.bin" \
         "$dir/ids.bin" "$HOST:builds/$id/"
+    echo "--- $(date +%H:%M:%S) activate"
     "${SSH[@]}" "$HOST" activate-build "$id"
     record build "$id"
     record repo_commit "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["meta"]["repo_commit"])' "$dir/manifest.json")"
     record licensed_commit "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["meta"].get("licensed_commit",""))' "$dir/manifest.json")"
+    echo "--- $(date +%H:%M:%S) smoke test"
     python3 -I deploy/smoke.py "$(url_file)" ;;
   links)
     python3 -I deploy/links.py server-json | "${SSH[@]}" "$HOST" links ;;

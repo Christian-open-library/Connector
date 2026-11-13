@@ -15,6 +15,7 @@ Sources:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import multiprocessing as mp
@@ -22,9 +23,10 @@ import re
 import sqlite3
 import time
 import zlib
+from collections import deque
 from pathlib import Path
 
-from . import corpus
+from . import buildcache, corpus
 from .modernize import Modernizer, load_lexicon, pre_markdown
 from .scripture import (BIBLE_FILES, BOOKS, NAMES, ORDINAL, REPO, extract_refs, format_ref, parse_bible,
                         verse_limits)
@@ -234,6 +236,10 @@ def _init(limits):
     _w['limits'] = limits
 
 
+def _refs_for_groups(groups):
+    return [_refs_for(rows) for rows in groups]
+
+
 def _refs_for(rows):
     out = []
     limits = _w['limits']
@@ -265,25 +271,84 @@ def no_citation_work_ids(db: sqlite3.Connection) -> set:
     return ids
 
 
-def add_scripture_refs(db: sqlite3.Connection, limits: dict, processes: int = 3) -> int:
+def add_scripture_refs(db: sqlite3.Connection, limits: dict, processes: int = 3, use_cache: bool = False) -> int:
+    """Citations of every passage, inserted in passage id order. With use_cache (full builds), a work whose
+    passages (text, notes, ids) and the code are unchanged takes its rows from indexer.buildcache."""
     skip = no_citation_work_ids(db)
+    store = buildcache.open_store() if use_cache else None
+    version = buildcache.code_version(repr(sorted(limits.items())).encode()) if use_cache else ''
 
-    def chunks():
+    def works():
+        """(work_id, rows) for each work in id order; rows (id, work_id, text, notes) in id order."""
         cur = db.execute('SELECT id, work_id, text, notes FROM passages ORDER BY id')
-        while True:
-            rows = cur.fetchmany(2000)
-            if not rows:
-                return
-            rows = [r for r in rows if r[1] not in skip]
-            if rows:
-                yield rows
-    n = 0
-    # read everything first: sqlite cursors and a pool writing back do not mix well
-    batches = list(chunks())
-    with mp.Pool(processes, initializer=_init, initargs=(limits,)) as pool:
-        for refs in pool.imap(_refs_for, batches):
+        wid, rows = None, []
+        for r in iter(lambda: cur.fetchmany(2000), []):
+            for row in r:
+                if row[1] != wid:
+                    if rows:
+                        yield wid, rows
+                    wid, rows = row[1], []
+                rows.append(row)
+        if rows:
+            yield wid, rows
+
+    def key_of(rows) -> str:
+        h = hashlib.sha256(version.encode())
+        for pid, wid, text, notes in rows:
+            h.update(b'\0%d\0%d\0%d\0' % (pid, wid, len(text)) + text + b'\0' + (notes or b'-'))
+        return h.hexdigest()
+
+    # Streamed in passage id order with a few batches in flight: the citations are inserted as each batch comes
+    # back, so neither all the text nor all the citations are held in memory at once.
+    def batches():
+        """Lists of (cache key or '', cached?, rows or None) covering about 2000 passages to scan each."""
+        batch, size = [], 0
+        for wid, rows in works():
+            if wid in skip:
+                continue
+            key = key_of(rows) if store is not None else ''
+            cached = bool(key) and store.execute('SELECT 1 FROM refs WHERE key=?', (key,)).fetchone() is not None
+            batch.append((key, cached, None if cached else rows))
+            size += 0 if cached else len(rows)
+            if size >= 2000 or len(batch) >= 500:
+                yield batch
+                batch, size = [], 0
+        if batch:
+            yield batch
+
+    n = n_works = n_cached = 0
+    used: set = set()
+    pending: deque = deque()
+
+    def finish():
+        nonlocal n, n_works, n_cached
+        batch, res = pending.popleft()
+        found = iter(res.get() if res is not None else [])
+        for key, cached, _ in batch:
+            refs = buildcache.get(store, 'refs', key) if cached else next(found)
+            if key:
+                used.add(key)
+                if not cached:
+                    buildcache.put(store, 'refs', key, refs)
             db.executemany('INSERT INTO scripture_refs VALUES (?,?,?,?,?,?,?)', refs)
             n += len(refs)
+            n_works += 1
+            n_cached += cached
+
+    with mp.Pool(processes, initializer=_init, initargs=(limits,)) as pool:
+        for batch in batches():
+            groups = [rows for _, cached, rows in batch if not cached]
+            pending.append((batch, pool.apply_async(_refs_for_groups, (groups,)) if groups else None))
+            while len(pending) > processes * 2:
+                finish()
+        while pending:
+            finish()
+    if store is not None:
+        store.commit()
+        dropped = buildcache.prune(store, 'refs', used)
+        store.close()
+        print(f'  per-work cache: citations of {n_cached} of {n_works} works unchanged, '
+              f'{dropped} old entries dropped', flush=True)
     return n
 
 
@@ -483,7 +548,7 @@ def rebuild_bible(build_dir: Path, repo: Path = REPO):
     db.close()
 
 
-def build(build_dir: Path, repo: Path = REPO, processes: int = 3):
+def build(build_dir: Path, repo: Path = REPO, processes: int = 3, use_cache: bool = False):
     t0 = time.time()
     db = sqlite3.connect(build_dir / 'library.sqlite')
     db.execute('PRAGMA journal_mode=OFF')
@@ -491,7 +556,7 @@ def build(build_dir: Path, repo: Path = REPO, processes: int = 3):
     db.executescript(SCHEMA)
     limits, loaded = add_bible(db, repo)
     db.commit()
-    n_refs = add_scripture_refs(db, limits, processes)
+    n_refs = add_scripture_refs(db, limits, processes, use_cache=use_cache and buildcache.enabled())
     db.commit()
     print(f'  scripture citations: {n_refs} ({time.time() - t0:.0f}s)', flush=True)
     work_ids = dict(db.execute('SELECT key, id FROM works'))

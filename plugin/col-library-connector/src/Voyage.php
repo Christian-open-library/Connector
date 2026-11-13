@@ -26,6 +26,8 @@ defined('ABSPATH') || exit;
 /** Voyage could not be used (no key, budget, network, HTTP error, bad response). Safe to log. */
 final class VoyageException extends \RuntimeException
 {
+    /** Code of the exception thrown when the person's own daily re-ranking allowance is used up. */
+    public const PERSON_BUDGET = 2;
 }
 
 final class Voyage
@@ -254,10 +256,16 @@ final class Voyage
         }
     }
 
-    /** Reserves one attempt's estimate in the daily budget. @throws VoyageException when it cannot */
-    private function reserve(int $estimate): void
+    /**
+     * Reserves one attempt's estimate in the daily budget. Only re-ranking is held to the person's own
+     * allowance (embedding a query costs a few tokens). @throws VoyageException when it cannot
+     */
+    private function reserve(int $estimate, bool $personLimit): void
     {
-        if ($this->limits !== null && !$this->limits->reserveVoyage($estimate)) {
+        if ($this->limits !== null && !$this->limits->reserveVoyage($estimate, $personLimit)) {
+            if ($this->limits->lastRefusal === 'person') {
+                throw new VoyageException('this person\'s daily re-ranking allowance is used up', VoyageException::PERSON_BUDGET);
+            }
             throw new VoyageException('the daily Voyage token budget is used up');
         }
     }
@@ -290,7 +298,7 @@ final class Voyage
             if ($limit < 1.0) {
                 throw new VoyageException("$path: no time left before the request deadline");
             }
-            $this->reserve($estimate);
+            $this->reserve($estimate, $path === '/rerank');
             $t0 = microtime(true);
             $res = $this->send($this->baseUrl . $path, $body, $limit);
             $ms = (int) round((microtime(true) - $t0) * 1000);

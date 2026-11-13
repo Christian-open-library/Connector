@@ -97,8 +97,11 @@ final class Quote
         private readonly float $deadline,
         int $nprobe = 32,
         private readonly ?Log $log = null,
+        int $rerankCandidates = Search::FUSE_TOP,
+        int $rerankDocChars = Search::RERANK_DOC_CHARS,
     ) {
-        $this->search = new Search($store, $voyage, $deadline, $nprobe, $log);
+        $this->search = new Search($store, $voyage, $deadline, $nprobe, $log, 1.0, Search::EXACT_SCAN_MAX,
+            $rerankCandidates, $rerankDocChars);
     }
 
     /** @throws SearchInputException */

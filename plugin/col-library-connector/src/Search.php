@@ -238,7 +238,7 @@ final class Search
     public const RELAX_QUERIES = 4;
     public const EXACT_SCAN_MAX = 20000;
     public const DUPLICATE_JACCARD = 0.5;
-    public const RERANK_DOC_CHARS = 1800;
+    public const RERANK_DOC_CHARS = 800;    // 2026-11-13: 800 matched or beat 1800 on the eval at 62% of the tokens
     public const EXACT_COUNT_CAP = 1000;     // exact mode counts matches only this far ("more than 1,000")
     public const MAX_QUERY_WORDS = 64;
     public const MAX_REPEATS = 4;            // exact mode: times one word may occur in the phrase
@@ -276,6 +276,10 @@ final class Search
         private readonly ?Log $log = null,
         private readonly float $prefilterKeep = 1.0,
         private readonly int $exactScanMax = self::EXACT_SCAN_MAX,   // lower in tests
+        // The reranker sees the first $rerankCandidates fused passages, $rerankDocChars of each (config
+        // rerank_candidates, rerank_doc_chars); the rest follow in fused order.
+        private readonly int $rerankCandidates = self::FUSE_TOP,
+        private readonly int $rerankDocChars = self::RERANK_DOC_CHARS,
     ) {
     }
 
@@ -343,7 +347,7 @@ final class Search
             }
         }
 
-        $fused = self::rrf([$keyword, $vector], self::RRF_K, self::FUSE_TOP);
+        $fused = self::rrf([$keyword, $vector], self::RRF_K, max(self::FUSE_TOP, $this->rerankCandidates));
         if ($phrase !== []) {
             $fused = array_values(array_unique(array_merge($phrase, $fused)));
         }
@@ -357,8 +361,8 @@ final class Search
             } else {
                 try {
                     $t = microtime(true);
-                    $order = $this->voyage->rerank($modern, array_column($cands, 'doc'),
-                        min(count($cands), $limit * 2), $this->deadline);
+                    $docs = array_column(array_slice($cands, 0, max(2, $this->rerankCandidates)), 'doc');
+                    $order = $this->voyage->rerank($modern, $docs, min(count($docs), $limit * 2), $this->deadline);
                     $this->trace['rerank_ms'] = self::ms($t);
                     foreach ($order as $o) {
                         if (isset($cands[$o['index']])) {
@@ -368,9 +372,14 @@ final class Search
                     $cands = self::reorder($cands, array_column($order, 'index'));
                     $reranked = true;
                 } catch (VoyageException $e) {
-                    $this->trace['rerank'] = 'failed';
-                    $this->log?->error('voyage_rerank_failed', ['error' => $e->getMessage()]);
-                    $notes[] = 'Re-ranking unavailable right now; results are in fused order.';
+                    if ($e->getCode() === VoyageException::PERSON_BUDGET) {
+                        $this->trace['rerank'] = 'person budget';
+                        $notes[] = self::personBudgetNote();
+                    } else {
+                        $this->trace['rerank'] = 'failed';
+                        $this->log?->error('voyage_rerank_failed', ['error' => $e->getMessage()]);
+                        $notes[] = 'Re-ranking unavailable right now; results are in fused order.';
+                    }
                 }
             }
         }
@@ -895,7 +904,7 @@ final class Search
             $w = $c['work'];
             $modern = Text::modernizeText($plain[$i], $spelling);
             $head = Text::modernizeText($heads[$i], $spelling);
-            $cands[$i]['doc'] = Text::clip(ltrim($head . "\n" . $modern), self::RERANK_DOC_CHARS);
+            $cands[$i]['doc'] = Text::clip(ltrim($head . "\n" . $modern), $this->rerankDocChars);
             $cands[$i]['shingles'] = Text::shingles($modern);
             $cands[$i]['author_key'] = Text::looseKey($w['author'] !== '' ? $w['author'] : $w['author_slug']);
         }
@@ -961,6 +970,15 @@ final class Search
             }
         }
         return array_merge($out, array_values($cands));
+    }
+
+    /** The note for a person past their daily re-ranking allowance (RateLimit, 'person'). */
+    public static function personBudgetNote(): string
+    {
+        $hours = max(1, (int) ceil((86400 - time() % 86400) / 3600));
+        return 'You have used today\'s re-ranked searches (each person has a daily share, so the library can stay '
+            . 'free for everyone). Results are in meaning and keyword order, without re-ranking or match labels, '
+            . "until 00:00 UTC (in about $hours hour" . ($hours === 1 ? '' : 's') . ').';
     }
 
     private function remaining(): float

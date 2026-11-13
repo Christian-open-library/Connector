@@ -224,4 +224,30 @@ function test_log_names_the_link_id_never_the_key(): void
     assert_same(['la00001', 'owner'], array_column($events, 'link'));
 }
 
+
+function test_a_person_gets_a_fixed_daily_allowance(): void
+{
+    $dir = col_tmpdir('rl');
+    $clock = fn () => 1_800_000_000;
+    $link = ['id' => 'la00001', 'calls_per_day' => 500, 'calls_per_minute' => 30];
+    // Shared budget 10,000, allowance 300: the allowance (below a fifth, 2,000) is the limit.
+    $a = new RateLimit($dir, 100, 1000, 10_000, null, $clock, $link, 300);
+    assert_true($a->reserveVoyage(300));
+    assert_same(null, $a->lastRefusal);
+    assert_false($a->reserveVoyage(1), 'past the person\'s allowance');
+    assert_same('person', $a->lastRefusal);
+    assert_true($a->reserveVoyage(50, false), 'query embeddings are not held to the allowance');
+    assert_same(null, $a->lastRefusal);
+    $owner = new RateLimit($dir, 100, 1000, 10_000, null, $clock, null, 300);
+    assert_true($owner->reserveVoyage(5000), 'the owner key has no personal allowance');
+    // A large allowance is still capped at a fifth of the shared budget.
+    $b = new RateLimit($dir, 100, 1000, 10_000, null, $clock, ['id' => 'lb00002'] + $link, 1_000_000);
+    assert_true($b->reserveVoyage(2000));
+    assert_false($b->reserveVoyage(1));
+    assert_same('person', $b->lastRefusal);
+    $c = new RateLimit($dir, 100, 1000, 7400, null, $clock, ['id' => 'lc00003'] + $link, 1_000_000);
+    assert_false($c->reserveVoyage(100), 'the shared budget is used up (5,350 + 2,000 of 7,400)');
+    assert_same('shared', $c->lastRefusal);
+}
+
 }

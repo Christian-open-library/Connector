@@ -67,6 +67,13 @@ return [
     'max_calls_per_minute'      => 120,         // tool calls per minute (UTC minute)
     'max_calls_per_day'         => 10000,       // tool calls per UTC day
     'max_voyage_tokens_per_day' => 15_000_000,  // Voyage tokens per UTC day; beyond it, keyword search only. 0 disables Voyage.
+    // One person's (personal link or signed-in account) daily re-ranking allowance, never more than a fifth
+    // of the line above. Past it, their searches still use meaning + keyword, without re-ranking, until
+    // 00:00 UTC. Default 1,000,000 (about 90 re-ranked searches).
+    // 'max_voyage_tokens_per_person_per_day' => 1_000_000,
+    // What one search costs: passages sent to the reranker and characters of each (defaults below).
+    // 'rerank_candidates' => 50,
+    // 'rerank_doc_chars'  => 800,
 
     // Origin header values accepted. Requests from AI apps' servers normally carry no Origin;
     // any other Origin is rejected with 403 and recorded in the log (or PHP's error log).

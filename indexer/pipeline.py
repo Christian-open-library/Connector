@@ -30,6 +30,11 @@ BUILDS = DATA / 'build'
 DEPLOYED = DATA / 'deployed-office.json'   # written by deploy/deploy-office.sh
 
 
+def step(what: str) -> None:
+    """A timestamped line in the update log, so each step's time can be read off it."""
+    print(f'--- {datetime.now().strftime("%H:%M:%S")} {what}', flush=True)
+
+
 def verify(build_dir: Path) -> dict:
     """Sanity checks on a finished build; raises SystemExit on failure."""
     db = sqlite3.connect(f'file:{build_dir / "library.sqlite"}?mode=ro', uri=True)
@@ -97,12 +102,17 @@ def build(sample: int, fake: bool, max_dollars: float, processes: int, licensed:
     stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
     out = BUILDS / (stamp + ('-sample' if sample else '') + ('-fake' if fake else ''))
     try:
-        build_db.build(REPO, out, sample, processes, licensed)
-        references.build(out, REPO, processes)
+        step('parse works, build library.sqlite')
+        build_db.build(REPO, out, sample, processes, licensed, use_cache=not sample)
+        step('references')
+        references.build(out, REPO, processes, use_cache=not sample)
         if not fake:
+            step('embed new passages')
             embed.run(out, dry_run=False, max_dollars=max_dollars, workers=4,
                       model=embed.DOC_MODEL, dims=embed.DIMS)
-        ivf.build(out, fake=fake, k=2048, sample=200_000, iters=12)
+        step('vector index')
+        ivf.build(out, fake=fake, k=2048, sample=200_000, iters=12, save_flat=not sample)
+        step('verify')
         verify(out)
     except BaseException:
         # A failed build is never deployed: do not leave its (multi-GB) directory behind.
@@ -158,6 +168,7 @@ def nightly(max_dollars: float):
         return
     out = build(sample=0, fake=False, max_dollars=max_dollars, processes=3, licensed=licensed)
     # The office server (mcp.christianopenlibrary.org).
+    step('deploy to the office server')
     subprocess.run(['bash', str(ROOT / 'deploy/deploy-office.sh'), 'build', str(out)], check=True)
     # Again, so tonight's embedding cost is on the public cost card (deploy/funding.py) by morning.
     subprocess.run(['bash', str(ROOT / 'deploy/deploy-office.sh'), 'members'], capture_output=True, text=True)
@@ -167,6 +178,7 @@ def nightly(max_dollars: float):
                   if p.is_dir() and not p.is_symlink() and p != out and 'sample' not in p.name)
     for old in olds[:-1]:
         subprocess.run(['rm', '-rf', '--', str(old)], check=True)
+    step('done')
 
 
 def main(argv=None):

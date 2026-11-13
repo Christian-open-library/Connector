@@ -205,9 +205,40 @@ class Robustness(Repo):
                            type='book', collection='c', license='', source_url='', tcp_id='', series='', ocr=False,
                            files=['C/bad.md', 'C/../../private/canary.md'])
         build_db._worker.update(roots={'': self.repo, 'licensed': None}, mod=build_db.Modernizer({}))
-        w, rows, err, _ = build_db._process(work)
+        w, rows, err, _, _, _, _ = build_db._process(work)
         self.assertIsNone(rows)
         self.assertIn('UnsafePath', err)
+
+    def test_the_per_work_cache_gives_the_same_rows_and_notices_changes(self):
+        import os
+        from indexer import buildcache
+        self.write('C/w.md', PROSE + '\n')
+        work = corpus.Work(id=3, key='C/w.md', author='A', author_slug='', title='T', full_title='', year=None,
+                           type='book', collection='c', license='', source_url='', tcp_id='', series='', ocr=False,
+                           files=['C/w.md'])
+        os.environ['LIBRARY_BUILD_CACHE_DIR'] = str(self.repo / 'cache')
+        try:
+            store = buildcache.open_store()
+            build_db._worker.update(roots={'': self.repo, 'licensed': None}, mod=build_db.Modernizer({}),
+                                    version='v1', store=None)
+            first = build_db._process(work)
+            self.assertFalse(first[5])
+            buildcache.put_packed(store, 'parsed', first[4], first[6])
+            store.commit()
+            again = build_db._process(work)
+            self.assertTrue(again[5])
+            self.assertEqual(again[1:4], first[1:4])
+            import dataclasses                                  # same file on the licensed shelf: its own entry
+            build_db._worker.update(roots={'': self.repo, 'licensed': self.repo})
+            self.assertNotEqual(build_db._process(dataclasses.replace(work, root='licensed'))[4], first[4])
+            self.write('C/w.md', PROSE + ' Amen.\n')
+            self.assertFalse(build_db._process(work)[5])
+            build_db._worker.update(version='v2', store=None)
+            self.write('C/w.md', PROSE + '\n')
+            self.assertFalse(build_db._process(work)[5])      # code changed: not from the cache
+        finally:
+            del os.environ['LIBRARY_BUILD_CACHE_DIR']
+            build_db._worker.update(version='', store=None)
 
     def test_too_many_passages_is_an_error(self):
         self.write('C/many.md', '\n\n'.join([PROSE] * 5) + '\n')

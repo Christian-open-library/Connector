@@ -28,6 +28,12 @@ final class Config
         'max_calls_per_minute'      => 120,
         'max_calls_per_day'         => 10000,
         'max_voyage_tokens_per_day' => 15_000_000,
+        // One person's daily re-ranking allowance (RateLimit; at most a fifth of the line above).
+        'max_voyage_tokens_per_person_per_day' => 1_000_000,
+        // Passages sent to the reranker per search, and characters of each (Search). These set what a
+        // search costs: about rerank_candidates x rerank_doc_chars / 3.7 tokens (50 x 800: ~10,700, measured 2026-11-13).
+        'rerank_candidates'         => 50,
+        'rerank_doc_chars'          => 800,
         'allowed_origins'           => self::DEFAULT_ORIGINS,
         'log_level'                 => 'off',
         'log_queries'               => false,
@@ -41,6 +47,9 @@ final class Config
         'max_calls_per_minute'      => [1, 1_000_000],
         'max_calls_per_day'         => [1, 1_000_000_000],
         'max_voyage_tokens_per_day' => [0, 1_000_000_000_000],
+        'max_voyage_tokens_per_person_per_day' => [1, 1_000_000_000_000],
+        'rerank_candidates'         => [2, 1000],
+        'rerank_doc_chars'          => [200, 20000],
     ];
 
     private function __construct(private readonly array $values, private readonly string $path)
@@ -318,6 +327,21 @@ final class Config
     public function maxVoyageTokensPerDay(): int
     {
         return $this->values['max_voyage_tokens_per_day'];
+    }
+
+    public function maxVoyageTokensPerPersonPerDay(): int
+    {
+        return $this->values['max_voyage_tokens_per_person_per_day'];
+    }
+
+    public function rerankCandidates(): int
+    {
+        return $this->values['rerank_candidates'];
+    }
+
+    public function rerankDocChars(): int
+    {
+        return $this->values['rerank_doc_chars'];
     }
 
     /** @return list<string> normalized origins (see normalizeOrigin) */

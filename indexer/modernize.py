@@ -296,6 +296,7 @@ class Modernizer:
                 best, best_n, ratio = c, n, tratio
         frontier = {w}
         seen = {w}
+        best_depth = -1                        # -1: from a curated list
         for depth in range(3):
             nxt = set()
             for v in frontier:
@@ -305,8 +306,10 @@ class Modernizer:
                     seen.add(c)
                     nxt.add(c)
                     n = self.count(c)
-                    if n >= LEXICON_MIN and n > best_n:
-                        best, best_n, ratio = c, n, RATIO
+                    # a tie at the same distance goes to the alphabetically first word: sets are visited in an
+                    # order that changes from run to run (versie -> versi or versy), so builds differed
+                    if n >= LEXICON_MIN and (n > best_n or (n == best_n and best_depth == depth and c < best)):
+                        best, best_n, ratio, best_depth = c, n, RATIO, depth
             # stop early only on a strong hit; a weak depth-0 hit (e.g. Latin "iesus") may lose
             # to a far more common form one edit further ("jesus")
             if best is not None and (depth >= 1 or best_n >= 1000):
@@ -319,9 +322,12 @@ class Modernizer:
         if best is not None and (own == 0 or best_n >= own * ratio):
             if ' ' in best:
                 return best
-            if best != w and best not in self._cache:
-                self._cache[w] = best          # guard against cycles while chaining
-                best = self.standard(best)     # iesvs -> iesus -> jesus
+            if best != w:
+                # iesvs -> iesus -> jesus. Always follow the chain: skipping it when best was already looked up
+                # made a word's form depend on which works this process had modernized before (so builds
+                # were not reproducible). A chain cannot loop: each step needs a word at least 5x as common
+                # (or, from an unknown word, a known one).
+                best = self.standard(best)
             eth = self._verb_eth(best)
             return self.fold_uk(eth or best)
         eth = self._verb_eth(w)
