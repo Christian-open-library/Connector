@@ -75,7 +75,7 @@ function test_bad_funding_entries_are_ignored(): void
 function test_card_is_well_formed_escaped_svg(): void
 {
     $funding = ['months' => ['2026-11' => ['given_cents' => 250, 'costs' => [['<script>alert(1)</script> & co', 1086]]]]];
-    foreach (['dark', 'light'] as $theme) {
+    foreach (['dark', 'light', 'site'] as $theme) {
         $svg = Support::card(Support::ledger($funding, [], NOV_15), $theme);
         if (class_exists(\DOMDocument::class)) {   // the office PC's PHP has no XML extension
             assert_true(@(new \DOMDocument())->loadXML($svg), "$theme card parses as XML");
@@ -313,4 +313,16 @@ function test_a_sponsor_who_asked_to_be_named_is_thanked_for_their_month(): void
     assert_contains("Give a month's costs and be thanked here by name.", $svg);
     assert_same(false, str_contains($svg, 'January sponsored'));
     assert_same(40, mb_strlen(Support::ledger(['months' => ['2026-11' => ['thanks' => str_repeat('x', 99)]]], [], NOV_15)['thanks']));
+}
+
+function test_site_theme_matches_the_website_and_follows_dark_mode(): void
+{
+    $svg = Support::card(Support::ledger(fixed_months([]), [], NOV_15), 'site');
+    assert_contains('system-ui', $svg);
+    assert_contains('#f4f4f1', $svg);
+    assert_contains('#e2bc62', $svg);
+    assert_contains('@media (prefers-color-scheme: dark)', $svg);
+    assert_contains('#1e1f23', $svg);
+    $dark = Support::card(Support::ledger(fixed_months([]), [], NOV_15), 'site-dark');
+    assert_same(false, str_contains($dark, '#1e1f23'), 'site-dark is not a public theme');
 }

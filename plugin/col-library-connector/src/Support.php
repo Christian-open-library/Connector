@@ -1,6 +1,6 @@
 <?php
 /**
- * The public "Keep it running" card, GET /support.svg?theme=light|dark on the office server: this
+ * The public "Keep it running" card, GET /support.svg?theme=light|dark|site on the office server: this
  * month's running costs and how they are paid for, then the coming months and how much of each the
  * gifts so far cover, so people can fund months ahead. The library's GitHub front page shows it,
  * linked to the curator's GitHub Sponsors page. Totals only: no givers' names, no single gift.
@@ -48,11 +48,22 @@ final class Support
     private const PAD = 28;
     private const ROW = 28;
     private const MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace";
+    /**
+     * light and dark match GitHub (the front page); site matches christianopenlibrary.org (sans type, tile
+     * background, gold bars, ink "Give" button) and follows the reader's light or dark setting by itself.
+     */
+    private const SANS = "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
     private const THEMES = [
         'dark' => ['bg' => '#0d1117', 'border' => '#30363d', 'text' => '#e6edf3', 'muted' => '#7d8590',
                    'accent' => '#3fb950', 'track' => '#21262d'],
         'light' => ['bg' => '#ffffff', 'border' => '#d0d7de', 'text' => '#1f2328', 'muted' => '#656d76',
                     'accent' => '#1a7f37', 'track' => '#eaeef2'],
+        'site' => ['bg' => '#f4f4f1', 'border' => '#e3e3e3', 'text' => '#1a1a1a', 'muted' => '#555555',
+                   'accent' => '#1a1a1a', 'track' => '#e3e3e3', 'bar' => '#e2bc62', 'prompt' => '#c9a45c',
+                   'btn' => '#1a1a1a', 'on-btn' => '#ffffff', 'font' => self::SANS, 'rx' => 6],
+        'site-dark' => ['bg' => '#1e1f23', 'border' => '#36373c', 'text' => '#f7f7f4', 'muted' => '#c2c2bb',
+                        'accent' => '#f7f7f4', 'track' => '#36373c', 'bar' => '#e2bc62', 'prompt' => '#e2bc62',
+                        'btn' => '#f7f7f4', 'on-btn' => '#121315'],
     ];
 
     /** The answer to GET or HEAD /support.svg. Never throws: a missing piece is left out and logged. */
@@ -76,7 +87,7 @@ final class Support
         } catch (\Throwable $e) {
             error_log('col-library-connector: cost card without search costs: ' . $e->getMessage());
         }
-        $theme = ($query['theme'] ?? '') === 'light' ? 'light' : 'dark';
+        $theme = in_array($query['theme'] ?? '', ['light', 'site'], true) ? $query['theme'] : 'dark';
         return new Response(200, [
             'Content-Type' => 'image/svg+xml; charset=utf-8',
             'Cache-Control' => 'public, max-age=600',   // Cloudflare keeps it 10 minutes
@@ -230,7 +241,8 @@ final class Support
     /** The card as SVG for one ledger (see ledger()). */
     public static function card(array $l, string $theme): string
     {
-        $t = self::THEMES[$theme] ?? self::THEMES['dark'];
+        $theme = isset(self::THEMES[$theme]) && $theme !== 'site-dark' ? $theme : 'dark';
+        $t = self::THEMES[$theme];
         $w = self::W;
         $x = self::PAD;
         $right = $w - self::PAD;
@@ -328,36 +340,55 @@ final class Support
                 . ' about ' . self::money($a['costs']) . ', ' . $a['pct'] . '% funded', $l['ahead'])) . '.';
         $label = self::esc($summary);
         $body = implode("\n  ", $out);
-        $mono = self::MONO;
+        $font = $t['font'] ?? self::MONO;
+        $rx = $t['rx'] ?? 8;
+        $css = self::colors($t);
+        if ($theme === 'site') {
+            $css .= "\n    @media (prefers-color-scheme: dark) {\n" . self::colors(self::THEMES['site-dark']) . "\n    }";
+        }
         $w1 = $w - 1;
         $h1 = $h - 1;
         return <<<SVG
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 $w $h" width="$w" height="$h" role="img" aria-label="$label">
   <title>$label</title>
   <style>
-    text { font-family: $mono; font-size: 15px; fill: {$t['text']}; }
-    .prompt { fill: {$t['accent']}; }
+    text { font-family: $font; font-size: 15px; }
     .head { font-size: 17px; font-weight: 600; }
-    .month, .note, .item-n, .label { fill: {$t['muted']}; }
     .note { font-size: 13px; }
     .label { font-size: 12px; letter-spacing: 1.5px; }
-    .total { font-weight: 600; }
-    .given-a, .status { fill: {$t['accent']}; }
-    .status { font-weight: 600; }
+    .total, .status { font-weight: 600; }
     .amount { text-anchor: end; }
-    .rule { stroke: {$t['border']}; stroke-dasharray: 3 4; }
-    .track { fill: {$t['track']}; }
-    .bar { fill: {$t['accent']}; }
-    .pill { fill: none; stroke: {$t['accent']}; stroke-width: 1.5; }
-    .give { text-anchor: middle; font-weight: 600; fill: {$t['accent']}; }
+    .rule { stroke-dasharray: 3 4; }
+    .pill { stroke-width: 1.5; }
+    .give { text-anchor: middle; font-weight: 600; }
+$css
   </style>
-  <rect x="0.5" y="0.5" width="$w1" height="$h1" rx="8" fill="{$t['bg']}" stroke="{$t['border']}"/>
+  <rect x="0.5" y="0.5" width="$w1" height="$h1" rx="$rx" class="card"/>
   <text x="$x" y="46" class="head"><tspan class="prompt">&#8250; </tspan>Keep it running</text>
   <text x="$right" y="46" class="month amount">{$month}</text>
   <text x="$x" y="72" class="note">What the AI connector costs to run, and how it's covered.</text>
   $body
 </svg>
 SVG;
+    }
+
+    /** The colour rules for one palette (see THEMES). */
+    private static function colors(array $t): string
+    {
+        $bar = $t['bar'] ?? $t['accent'];
+        $pill = isset($t['btn']) ? "fill: {$t['btn']}; stroke: {$t['btn']};" : "fill: none; stroke: {$t['accent']};";
+        $give = $t['on-btn'] ?? $t['accent'];
+        $prompt = $t['prompt'] ?? $t['accent'];
+        return "    text { fill: {$t['text']}; }\n"
+            . "    .card { fill: {$t['bg']}; stroke: {$t['border']}; }\n"
+            . "    .prompt { fill: $prompt; }\n"
+            . "    .month, .note, .item-n, .label { fill: {$t['muted']}; }\n"
+            . "    .given-a, .status { fill: {$t['accent']}; }\n"
+            . "    .rule { stroke: {$t['border']}; }\n"
+            . "    .track { fill: {$t['track']}; }\n"
+            . "    .bar { fill: $bar; }\n"
+            . "    .pill { $pill }\n"
+            . "    .give { fill: $give; }";
     }
 
     /** @return array{given: int, covered_by: ?string, covered: int, thanks: ?string, costs: list<array{0: string, 1: int, 2: string}>} */
