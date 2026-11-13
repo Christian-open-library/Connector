@@ -12,6 +12,9 @@ member list is (nightly). The server prices the searches it was billed for itsel
     its 'given' are amounts he gives toward a month, shown as given like any gift);
   - new books: the Voyage tokens nightly builds were billed for ("embedded ..., 2.9M tokens billed" in
     data/logs/update-YYYYMMDD.log), at voyage-4-lite's price;
+  - other_gifts in costs.json: gifts that came some other way (Buy Me a Coffee, a check), by month, entered
+    by hand: [{"cents": 4000, "thanks": "Name"}]. "thanks" only when the giver asked to be thanked by name
+    on the card for that month; leave it out otherwise;
   - gifts: GitHub Sponsors, read with gh as the account that receives them (totals only, no names).
     A monthly sponsorship counts in every month it is active, a one-time gift in the month it was
     made. GitHub only says who sponsors now, so a month that is over keeps the amount recorded for it
@@ -117,6 +120,16 @@ def compute(now: datetime | None = None) -> dict:
     for gm, cents in curator.get('given', {}).items():   # after recording: the ledger keeps Sponsors only
         if gm in months:
             months[gm]['given_cents'] += int(cents)
+    for gm, gifts_in in costs.get('other_gifts', {}).items():
+        if gm.startswith('_') or gm not in months:
+            continue
+        names = []
+        for g in gifts_in:
+            months[gm]['given_cents'] += int(g.get('cents', 0))
+            if str(g.get('thanks', '')).strip():
+                names.append(str(g['thanks']).strip())
+        if names:
+            months[gm]['thanks'] = ' and '.join(names)
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     tmp = LEDGER.with_suffix('.tmp')
     tmp.write_text(json.dumps(ledger, indent=1, sort_keys=True) + '\n')

@@ -91,7 +91,7 @@ function test_card_is_well_formed_escaped_svg(): void
 function test_card_says_funded_and_what_carries_forward(): void
 {
     $base = ['month' => '2026-12', 'items' => [[Support::SEARCH_LABEL, 100]], 'costs' => 100, 'covered_by' => null,
-             'ahead' => [['month' => '2027-01', 'costs' => 340, 'pct' => 58, 'covered_by' => null]], 'through' => null];
+             'ahead' => [['month' => '2027-01', 'costs' => 340, 'pct' => 58, 'covered_by' => null, 'thanks' => null]], 'through' => null];
     $svg = Support::card(['given' => 50, 'carried' => 300] + $base, 'dark');
     assert_contains('Funded. Thank you!</text>', $svg);
     assert_not_contains('carries', $svg);
@@ -125,9 +125,9 @@ function test_a_covered_month_sends_its_gifts_to_the_coming_months(): void
     assert_same(1423, $l['costs']);
     assert_same(0, $l['carried']);
     // $10 given in a covered month: December and January (about $3.37 each) are funded, February 96%.
-    assert_same([['month' => '2026-12', 'costs' => 337, 'pct' => 100, 'covered_by' => null],
-                 ['month' => '2027-01', 'costs' => 337, 'pct' => 100, 'covered_by' => null],
-                 ['month' => '2027-02', 'costs' => 337, 'pct' => 96, 'covered_by' => null]], $l['ahead']);
+    assert_same([['month' => '2026-12', 'costs' => 337, 'pct' => 100, 'covered_by' => null, 'thanks' => null],
+                 ['month' => '2027-01', 'costs' => 337, 'pct' => 100, 'covered_by' => null, 'thanks' => null],
+                 ['month' => '2027-02', 'costs' => 337, 'pct' => 96, 'covered_by' => null, 'thanks' => null]], $l['ahead']);
     assert_same('2027-01', $l['through']);
     $svg = Support::card($l, 'dark');
     assert_contains('November is covered.</text>', $svg);
@@ -296,4 +296,21 @@ function test_a_month_covered_in_part_asks_gifts_for_the_rest(): void
     $l = Support::ledger($f, [], NOV_15);
     assert_same([1423, 0], [$l['covered'], $l['ahead'][0]['pct']]);
     assert_contains('Funded. Thank you!', Support::card($l, 'dark'));
+}
+
+function test_a_sponsor_who_asked_to_be_named_is_thanked_for_their_month(): void
+{
+    $f = fixed_months([]);
+    $f['months']['2026-11']['thanks'] = "  Grace   <Church> & Co \n";
+    $f['months']['2026-12']['thanks'] = 'The Smith family';
+    $f['months']['2027-01']['thanks'] = '   ';
+    $l = Support::ledger($f, [], NOV_15);
+    assert_same('Grace <Church> & Co', $l['thanks']);
+    assert_same(['The Smith family', null], [$l['ahead'][0]['thanks'], $l['ahead'][1]['thanks']]);
+    $svg = Support::card($l, 'light');
+    assert_contains('Thank you, Grace &lt;Church&gt; &amp; Co, for sponsoring November.', $svg);
+    assert_contains('December sponsored by The Smith family. Thank you!', $svg);
+    assert_contains("Give a month's costs and be thanked here by name.", $svg);
+    assert_same(false, str_contains($svg, 'January sponsored'));
+    assert_same(40, mb_strlen(Support::ledger(['months' => ['2026-11' => ['thanks' => str_repeat('x', 99)]]], [], NOV_15)['thanks']));
 }

@@ -12,7 +12,8 @@
  *    {"months": {"2026-11": {"given_cents": 0, "covered_by": "Matt Miller",
  *                            "costs": [["Domain name", 87, "fixed"], ["Adding new books (Voyage AI)", 6, "metered"]]}}}
  *    A cost's kind is "fixed" (monthly), "once" or "metered" (by use). A coming month's given_cents
- *    is what monthly sponsors give.
+ *    is what monthly sponsors give. A month may carry "thanks": the name of someone who sponsored it
+ *    and asked to be thanked by name (deploy/costs.json other_gifts); the card thanks them.
  * Arithmetic (the card makes no promise about how gifts are spent: they go to the curator personally):
  * a month the curator covers (covered_by) needs no gifts, so its gifts count toward later months; a month
  * he covers in part (covered_cents, without covered_by) needs gifts only for the rest;
@@ -90,8 +91,8 @@ final class Support
      * @param array<string, array<int, int>> $spending RateLimit::spending()
      * @param array<string, int> $recent RateLimit::recentSpending()
      * @return array{month: string, items: list<array{0: string, 1: int}>, costs: int, given: int,
-     *   carried: int, covered_by: ?string, covered: int, capped: int, rest: int,
-     *   ahead: list<array{month: string, costs: int, pct: int, covered_by: ?string}>, through: ?string,
+     *   carried: int, covered_by: ?string, covered: int, thanks: ?string, capped: int, rest: int,
+     *   ahead: list<array{month: string, costs: int, pct: int, covered_by: ?string, thanks: ?string}>, through: ?string,
      *   plan: ?string}
      *   through: the last month of the unbroken run of fully funded months from next month on
      */
@@ -144,7 +145,7 @@ final class Support
             if ($m === $current) {
                 $result = ['month' => $m, 'items' => $items, 'costs' => $costs, 'given' => $row['given'],
                            'carried' => $carry, 'covered_by' => $row['covered_by'],
-                           'covered' => $row['covered'],
+                           'covered' => $row['covered'], 'thanks' => $row['thanks'],
                            'capped' => (int) ($spending['capped'][$ym] ?? 0)];
                 $thisMonth = $use;
             } else {
@@ -196,7 +197,7 @@ final class Support
                 $row = $last = $rows[$m];
             } else {
                 $base = $last ?? ($rows[$current] ?? self::month([]));
-                $row = ['given' => $last['given'] ?? 0, 'covered_by' => null, 'covered' => 0,
+                $row = ['given' => $last['given'] ?? 0, 'covered_by' => null, 'covered' => 0, 'thanks' => null,
                         'costs' => array_values(array_filter($base['costs'], static fn (array $c): bool => $c[2] === 'fixed'))];
             }
             $billable = max(0, $expect['rerank'] - $free);
@@ -215,7 +216,8 @@ final class Support
                 $carry = max(0, $carry + $row['given'] - max(0, $costs - $row['covered']));
             }
             if ($i <= self::AHEAD) {
-                $ahead[] = ['month' => $m, 'costs' => $costs, 'pct' => $pct, 'covered_by' => $row['covered_by']];
+                $ahead[] = ['month' => $m, 'costs' => $costs, 'pct' => $pct, 'covered_by' => $row['covered_by'],
+                            'thanks' => $row['thanks']];
             }
             $funded = $funded && $pct >= 100;
             if ($funded) {
@@ -277,6 +279,11 @@ final class Support
             $out[] = "<text x=\"$x\" y=\"$y\" class=\"note\">The search AI reached its daily spending limit on $capped "
                 . ($capped === 1 ? 'day' : 'days') . ' this month.</text>';
         }
+        if (($l['thanks'] ?? null) !== null) {
+            $y += 24;
+            $out[] = "<text x=\"$x\" y=\"$y\" class=\"note\">Thank you, " . self::esc($l['thanks']) . ', for sponsoring '
+                . self::esc(explode(' ', $month)[0]) . '.</text>';
+        }
 
         $y += 46;
         $out[] = "<text x=\"$x\" y=\"$y\" class=\"label\">COMING UP</text>";
@@ -295,8 +302,17 @@ final class Support
                 . self::esc(self::name($l['through'])) . '.</text>';
             $y += self::ROW;
         }
+        foreach ($l['ahead'] as $a) {
+            if (($a['thanks'] ?? null) !== null) {
+                $out[] = "<text x=\"$x\" y=\"" . ($y + 2) . '" class="note">' . self::esc(explode(' ', self::name($a['month']))[0])
+                    . ' sponsored by ' . self::esc($a['thanks']) . '. Thank you!</text>';
+                $y += 24;
+            }
+        }
 
         $y += 26;
+        $out[] = "<text x=\"$x\" y=\"$y\" class=\"note\">Give a month's costs and be thanked here by name.</text>";
+        $y += 20;
         $out[] = "<text x=\"$x\" y=\"$y\" class=\"note\">Free for everyone. Gifts support Matt Miller's work on the library.</text>";
         $pillW = 96;
         $pillX = $right - $pillW;
@@ -344,7 +360,7 @@ final class Support
 SVG;
     }
 
-    /** @return array{given: int, covered_by: ?string, covered: int, costs: list<array{0: string, 1: int, 2: string}>} */
+    /** @return array{given: int, covered_by: ?string, covered: int, thanks: ?string, costs: list<array{0: string, 1: int, 2: string}>} */
     private static function month(array $row): array
     {
         $costs = [];
@@ -355,7 +371,10 @@ SVG;
             }
         }
         $by = $row['covered_by'] ?? null;
-        return ['given' => is_int($row['given_cents'] ?? null) ? max(0, $row['given_cents']) : 0,
+        $thanks = $row['thanks'] ?? null;
+        $thanks = is_string($thanks) ? trim((string) preg_replace('/\s+/u', ' ', $thanks)) : '';
+        return ['thanks' => $thanks !== '' ? mb_substr($thanks, 0, 40) : null,
+                'given' => is_int($row['given_cents'] ?? null) ? max(0, $row['given_cents']) : 0,
                 'covered_by' => is_string($by) && trim($by) !== '' ? mb_substr(trim($by), 0, 24) : null,
                 'covered' => is_int($row['covered_cents'] ?? null) ? max(0, $row['covered_cents']) : 0,
                 'costs' => $costs];
