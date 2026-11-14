@@ -488,6 +488,28 @@ final class Store
     // ----------------------------------------------------------------------- cross-references
 
     /** True if the build has all these tables (the cross-reference tables came after the first builds). */
+    /**
+     * Which of these words are headwords of the library's dictionaries (one of them, Wilson 1661, is a general
+     * English dictionary): how check_quote tells a real word from a scan's misreading. Empty for a build
+     * without the dictionary table.
+     * @param list<string> $words lower-case  @return array<string,true>
+     */
+    public function headwords(array $words): array
+    {
+        $words = array_values(array_unique(array_map('strval', $words)));
+        if ($words === [] || !$this->hasTables('dictionary')) {
+            return [];
+        }
+        $out = [];
+        foreach (array_chunk($words, self::IN_CHUNK) as $chunk) {
+            $st = $this->run('SELECT DISTINCT norm FROM dictionary WHERE norm IN (' . self::marks($chunk) . ')', $chunk);
+            foreach ($st->fetchAll(\PDO::FETCH_COLUMN) as $norm) {
+                $out[(string) $norm] = true;
+            }
+        }
+        return $out;
+    }
+
     public function hasTables(string ...$names): bool
     {
         $names = array_values(array_unique($names));

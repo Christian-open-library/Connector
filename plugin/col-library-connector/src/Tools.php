@@ -386,6 +386,20 @@ final class Tools
         $ctx->log->debug('search', ['mode' => $mode, 'query' => $query, 'filtered' => $filters->active(),
             'hits' => count($result->hits), 'ms' => (int) round((microtime(true) - $t0) * 1000)] + $search->trace);
         if ($result->hits !== []) {
+            // Documents used by permission: a few passages of each per call, and a daily count (src/Licensed.php).
+            $commonOnly = $mode === 'exact'
+                && array_filter($search->queryTokens($query), static fn (string $t): bool => !Text::isStopword($t)) === [];
+            $kept = Licensed::limit($result->hits, $ctx->limits, $result->offset, $mode === 'exact', $commonOnly);
+            if ($kept['dropped'] > 0) {
+                $ctx->log->debug('licensed_limit', ['tool' => 'search_library', 'left_out' => $kept['dropped']]);
+                if ($kept['hits'] === []) {
+                    return self::error(implode(' ', $kept['notes']));
+                }
+                $result = new SearchResult($result->query, $result->mode, $result->method, $kept['hits'],
+                    array_merge($result->notes, $kept['notes']), $result->offset, $result->total, $result->totalCapped);
+            }
+        }
+        if ($result->hits !== []) {
             $result = new SearchResult($result->query, $result->mode, $result->method,
                 self::withContext($result->hits, $store), $result->notes, $result->offset, $result->total,
                 $result->totalCapped);
@@ -434,6 +448,13 @@ final class Tools
         $check = new Quote($store, Voyage::forBuild($ctx, $store), $ctx->deadline, $ctx->config->nprobe(), $ctx->log,
             $ctx->config->rerankCandidates(), $ctx->config->rerankDocChars());
         $result = $check->check($text, $author);
+        if ($result->primary !== null && Format::isLicensed($result->primary['work'])
+            && $ctx->limits->takeLicensed(1) === 0) {
+            // The daily count of passages from documents used by permission (src/Licensed.php): the verdict and
+            // the words given stay, the text around them is left out.
+            $result = $result->withoutContext(Licensed::dayNote($ctx->limits) . ' The text around the words is left '
+                . 'out. ' . Licensed::link($result->primary['work']) . '.');
+        }
         $ctx->log->debug('check_quote', ['query' => $text, 'credited' => $author !== null, 'verdict' => $result->verdict,
             'matches' => count($result->matches), 'ms' => (int) round((microtime(true) - $t0) * 1000)] + $check->trace);
         return self::ok(Format::quoteCheck($result));
@@ -504,8 +525,9 @@ final class Tools
             $before = min($before, self::LICENSED_BEFORE);
             $after = min($after, self::LICENSED_AFTER);
             $notes[] = 'This document is used by permission, so read_passage returns at most ' . self::LICENSED_BEFORE
-                . ' passages before and ' . self::LICENSED_AFTER . ' after the requested one. Quote what answers the '
-                . 'question and give the "Official copy" link for the rest.';
+                . ' passages before and ' . self::LICENSED_AFTER . ' after the requested one, and at most '
+                . number_format($ctx->limits->licensedPerDay()) . ' passages of such documents a day. Quote what answers '
+                . 'the question and give the "Official copy" link for the rest.';
         }
         $around = $store->neighbours($passage['work_id'], $passage['seq'], $before, $after);
         $earlier = $around['before'];
@@ -519,6 +541,28 @@ final class Tools
         if (count($later) > $after) {
             $nextId = $later[$after]['id'];
             $later = array_slice($later, 0, $after);
+        }
+        if (Format::isLicensed($work)) {
+            // The daily count (src/Licensed.php): the requested passage first, then what follows, then what precedes.
+            $granted = $ctx->limits->takeLicensed(1 + count($earlier) + count($later));
+            if ($granted === 0) {
+                return self::error(Licensed::dayNote($ctx->limits) . ' The full text is public: '
+                    . Licensed::link($work) . '.');
+            }
+            if ($granted < 1 + count($earlier) + count($later)) {
+                $keepLater = min(count($later), $granted - 1);
+                $keepEarlier = min(count($earlier), $granted - 1 - $keepLater);
+                if ($keepLater < count($later)) {
+                    $nextId = $later[$keepLater]['id'];
+                    $later = array_slice($later, 0, $keepLater);
+                }
+                if ($keepEarlier < count($earlier)) {
+                    $previousId = $earlier[count($earlier) - $keepEarlier - 1]['id'];
+                    $earlier = $keepEarlier > 0 ? array_slice($earlier, -$keepEarlier) : [];
+                }
+                $notes[] = Licensed::dayNote($ctx->limits) . ' Fewer passages are shown than asked for. The full text '
+                    . 'is public: ' . Licensed::link($work) . '.';
+            }
         }
         $text = Format::readPassage($work, array_merge($earlier, [$passage], $later), $passage['id'],
             $previousId, $nextId, $notes);
@@ -631,6 +675,19 @@ final class Tools
             'ms' => (int) round((microtime(true) - $t0) * 1000)]);
         if ($result->passages === 0) {
             return self::error(Format::noCitations($result, $chapterRefs));
+        }
+        if ($result->hits !== []) {
+            // Documents used by permission: a few passages of each per call, and a daily count (src/Licensed.php).
+            $kept = Licensed::limit($result->hits, $ctx->limits);
+            if ($kept['dropped'] > 0) {
+                $ctx->log->debug('licensed_limit', ['tool' => 'find_scripture_citations', 'left_out' => $kept['dropped']]);
+                if ($kept['hits'] === []) {
+                    return self::error(implode(' ', $kept['notes']));
+                }
+                $result = new CitationResult($result->label, $result->heading, $result->texts, $kept['hits'],
+                    $result->passages, $result->works, $result->inNotes, $result->chapterOnly, $result->chapterLabel,
+                    $result->offset, $result->capped, array_merge($result->notes, $kept['notes']));
+            }
         }
         if ($result->hits === []) {
             return self::error("Only {$result->passages} passage" . ($result->passages === 1 ? ' cites' : 's cite')

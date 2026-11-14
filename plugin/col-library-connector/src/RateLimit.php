@@ -14,8 +14,12 @@
  * (the costly step) is refused at the person's limit: query embeddings cost a few tokens, so meaning
  * search keeps working for them, without re-ranking, until 00:00 UTC.
  *
+ * A person also has a daily count of passages from documents used by permission (link_licensed:<id>,
+ * takeLicensed; src/Licensed.php).
+ *
  * Failure policy if the state database cannot be used: tool calls are allowed (the library keeps
- * working) and Voyage is refused (no spending that is not counted). Both cases are logged.
+ * working), Voyage is refused (no spending that is not counted) and passages of documents used by
+ * permission are left out (none handed out uncounted). All cases are logged.
  */
 
 namespace ColLibrary;
@@ -58,6 +62,7 @@ final class RateLimit
         private readonly ?\Closure $clock = null,
         private readonly ?array $link = null,
         private readonly int $personVoyageTokensPerDay = self::PERSON_VOYAGE_DEFAULT,
+        private readonly int $licensedPerDay = Licensed::PER_DAY_DEFAULT,
     ) {
     }
 
@@ -73,6 +78,7 @@ final class RateLimit
             null,
             $link,
             $config->maxVoyageTokensPerPersonPerDay(),
+            $config->maxLicensedPassagesPerPersonPerDay(),
         );
     }
 
@@ -153,6 +159,39 @@ final class RateLimit
         } catch (\Throwable $e) {
             $this->log?->error('ratelimit_unavailable', ['op' => 'takeCall', 'error' => $e->getMessage()]);
             return null;
+        }
+    }
+
+    /** Passages of documents used by permission one person may be given per UTC day. */
+    public function licensedPerDay(): int
+    {
+        return $this->licensedPerDay;
+    }
+
+    /**
+     * Counts passages of documents used by permission (the licensed shelf) against this person's daily
+     * limit, in one write transaction: returns how many of the $want passages may be served (0 to $want)
+     * and counts those. Callers without a personal link or account share one counter. If the count
+     * cannot be written, none is served (nothing is handed out that is not counted).
+     */
+    public function takeLicensed(int $want): int
+    {
+        if ($want <= 0) {
+            return 0;
+        }
+        $day = intdiv($this->now(), 86400);
+        $name = $this->link !== null ? 'link_licensed:' . $this->link['id'] : 'licensed_day';
+        try {
+            return $this->write(function (\PDO $db) use ($want, $day, $name): int {
+                $give = max(0, min($want, $this->licensedPerDay - $this->value($db, $name, $day)));
+                if ($give > 0) {
+                    $this->add($db, $name, $day, $give);
+                }
+                return $give;
+            });
+        } catch (\Throwable $e) {
+            $this->log?->error('ratelimit_unavailable', ['op' => 'takeLicensed', 'error' => $e->getMessage()]);
+            return 0;
         }
     }
 

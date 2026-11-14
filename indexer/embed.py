@@ -90,11 +90,8 @@ def _digests(keys: list[str]) -> np.ndarray:
     return np.array([bytes.fromhex(k) for k in keys], dtype='S20')
 
 
-def open_flat(dims: int):
-    """(sorted digests, float16 rows) as read-only memory maps, or None."""
-    from .buildcache import enabled
-    p = flat_path(dims)
-    if not enabled() or not p.exists():
+def _open_flat_file(p: Path, dims: int):
+    if not p.exists():
         return None
     with open(p, 'rb') as f:
         n = int.from_bytes(f.read(8), 'little')
@@ -103,6 +100,12 @@ def open_flat(dims: int):
         return None
     return (np.memmap(p, dtype='S20', mode='r', offset=8, shape=(n,)),
             np.memmap(p, dtype=np.float16, mode='r', offset=8 + n * 20, shape=(n, dims)))
+
+
+def open_flat(dims: int):
+    """(sorted digests, float16 rows) as read-only memory maps, or None."""
+    from .buildcache import enabled
+    return _open_flat_file(flat_path(dims), dims) if enabled() else None
 
 
 def flat_positions(flat, keys: list[str]) -> np.ndarray:
@@ -127,6 +130,57 @@ def save_flat(keys: list[str], X: np.ndarray, dims: int) -> None:
         for a in range(0, len(first), 100_000):
             f.write(np.ascontiguousarray(X[first[a:a + 100_000]], dtype=np.float16).tobytes())
     os.replace(tmp, p)
+
+
+def update_flat(keys: list[str], dims: int, cache: sqlite3.Connection, chunk: int = 50_000):
+    """Makes the flat store hold exactly the vectors of keys, without ever holding them all in memory, and
+    returns (its float16 rows as a read-only memory map, the row of each key, []). The new file is written
+    front to back in key order: rows the old store has are copied from it (read front to back too), the rest
+    come from the cache, also in key order. Same bytes as save_flat(keys, fill(keys)[0]). If some keys have
+    no vector anywhere, nothing is replaced and (None, None, their indexes into keys) is returned."""
+    d, first, row = np.unique(_digests(keys), return_index=True, return_inverse=True)
+    row = row.astype(np.int64).reshape(-1)
+    p = flat_path(dims)
+    old = open_flat(dims)
+    if old is None:
+        pos = np.full(len(d), -1, dtype=np.int64)
+    else:
+        pos = np.minimum(np.searchsorted(old[0], d), len(old[0]) - 1)
+        pos = np.where(old[0][pos] == d, pos, -1)
+    n_old = int((pos >= 0).sum())
+    if old is not None and n_old == len(d) == len(old[0]):
+        print(f'  vectors: all {len(d)} already in the flat store', flush=True)
+        return old[1], row, []
+    rest = np.flatnonzero(pos < 0)
+    looked = lookup_sorted(cache, [keys[first[i]] for i in rest])     # sorted keys in, so sorted rows out
+    absent = []
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix('.tmp')
+    with open(tmp, 'wb') as f:
+        f.write(len(d).to_bytes(8, 'little'))
+        f.write(d.tobytes())
+        for a in range(0, len(d), chunk):
+            ps = pos[a:a + chunk]
+            buf = np.zeros((len(ps), dims), dtype=np.float16)
+            have = ps >= 0
+            if have.any():
+                buf[have] = old[1][ps[have]]
+            for i in np.flatnonzero(~have):
+                j, v = next(looked)
+                assert rest[j] == a + i
+                if v is None:
+                    absent.append(int(first[rest[j]]))
+                else:
+                    buf[i] = np.frombuffer(v, dtype=np.float16)
+            f.write(buf.tobytes())
+    print(f'  vectors: {n_old} from the flat store, {len(rest) - len(absent)} from the cache, '
+          f'{len(absent)} missing', flush=True)
+    if absent:
+        tmp.unlink()
+        return None, None, sorted(absent)
+    del old
+    os.replace(tmp, p)
+    return _open_flat_file(p, dims)[1], row, []
 
 
 def fill(keys: list[str], dims: int, cache: sqlite3.Connection):

@@ -68,7 +68,7 @@ case "${1:-}" in
     tmp=$(mktemp "$BASE/links/.members.XXXXXX") || die "temp file"
     head -c 2000001 > "$tmp"
     [ "$(stat -c %s "$tmp")" -le 2000000 ] || { rm -f "$tmp"; die "member list too large"; }
-    python3 -I -c 'import json,re,sys; d=json.load(open(sys.argv[1])); m=d.get("members"); assert isinstance(m, list) and all(isinstance(x, str) and re.fullmatch(r"user_[A-Za-z0-9]{10,64}", x) for x in m)' "$tmp" \
+    python3 -I -c 'import json,re,sys; d=json.load(open(sys.argv[1])); ok=lambda l: isinstance(l, list) and all(isinstance(x, str) and re.fullmatch(r"user_[A-Za-z0-9]{10,64}", x) for x in l); assert ok(d.get("members")) and ok(d.get("blocked"))' "$tmp" \
       || { rm -f "$tmp"; die "member list is not valid"; }
     chgrp libsrv "$tmp" && chmod 640 "$tmp" && mv -f "$tmp" "$BASE/links/members.json" || die "write"
     echo "members: $(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["members"]))' "$BASE/links/members.json")" ;;

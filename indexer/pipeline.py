@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -18,7 +19,7 @@ import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import build_db, embed, ivf, references
+from . import build_db, corpus, embed, injection, ivf, references
 from .modernize import DATA, build_lexicon
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -96,6 +97,97 @@ def licensed_root(required: bool) -> Path | None:
     return None
 
 
+@contextlib.contextmanager
+def leaving_out(held: dict, roots: dict):
+    """While this is open, the works in held (key -> record) are not part of the library that build_db
+    reads, so nothing of them reaches the build. Yields {key: fingerprint} of the works left out. A held
+    work whose files or catalog row changed since it was held is not left out: it is built and scanned again
+    (it is in .changed of what is yielded, and parse_and_hold then takes it out again whatever the scan
+    says: a held work never goes live by itself). A held work Matt has released (injection.released) is
+    built too, while its files are still the ones that scanned clean (.released).
+
+    Done here, around corpus.iter_works and corpus.licensed_works, and not as a parameter of build_db.build,
+    because build_db.py and corpus.py are in the per-work cache key (indexer/buildcache.py): editing them
+    empties the cache and costs a cold run. Make it a parameter the next time those files change anyway."""
+    class Left(dict):
+        pass
+    left = Left()
+    left.changed, left.released = {}, set()
+
+    def keep(work) -> bool:
+        rec = held.get(work.key)
+        if rec is None:
+            return True
+        fp = injection.fingerprint(roots.get(work.root), work)
+        if rec.get('fingerprint') and fp and fp != rec['fingerprint']:
+            print(f'held-back work changed, checking it again (it stays held): {work.key!r}', flush=True)
+            left.changed[work.key] = fp
+            return True
+        if injection.released(rec) and fp and fp == rec['fingerprint']:
+            print(f'held-back work released by Matt, back in the build: {work.key!r}', flush=True)
+            left.released.add(work.key)
+            return True
+        left[work.key] = fp
+        return False
+
+    iter_works, licensed_works = corpus.iter_works, corpus.licensed_works
+    corpus.iter_works = lambda *a, **k: (w for w in iter_works(*a, **k) if keep(w))
+    corpus.licensed_works = lambda *a, **k: [w for w in licensed_works(*a, **k) if keep(w)]
+    try:
+        yield left
+    finally:
+        corpus.iter_works, corpus.licensed_works = iter_works, licensed_works
+
+
+def parse_and_hold(out: Path, sample: int, processes: int, licensed: Path | None) -> None:
+    """Builds library.sqlite in out without the held-back works, scans it for text aimed at an AI
+    (indexer/injection.py; THREAT-MODEL.md, T3) and, when a work has a hit that is not allowed, holds that
+    work back too: the database is built again without it. Raises SystemExit when the hits look like more
+    than a stray sentence (injection.why_stop): nothing is deployed then."""
+    # Sample builds hold only part of the library: they keep their own list, and send no alerts.
+    path = injection.HELD.with_name('held-back-sample.json') if sample else injection.HELD
+    roots = {'': REPO, 'licensed': licensed}
+    allowed = injection.load_allow()
+    held = injection.load_held(path)
+    for key in [k for k, r in held.items() if injection.all_allowed(k, r, allowed)]:
+        print(f'held-back work allowed, back in the build: {key!r}', flush=True)
+        del held[key]
+    with leaving_out(held, roots) as left:
+        build_db.build(REPO, out, sample, processes, licensed, use_cache=not sample)
+    step('injection check')
+    hits = injection.flagged(out, allowed)
+    stop = injection.why_stop(hits, held, {**left, **left.changed})
+    if stop:
+        raise SystemExit(f'injection check: {stop}; nothing was deployed. Read the HIT lines above, then fix '
+                         f'the books or add lines to {injection.ALLOW} (on Matt\'s word only)')
+    now = injection.record(hits, held, left, changed=left.changed)
+    for key in sorted(set(held) - set(now)):
+        print(f'no longer held back ({"released by Matt" if key in left.released else "gone from the library"}): '
+              f'{key!r}', flush=True)
+    injection.save_held(now, path)      # before the second pass: a run cut off here starts with the list
+    # Out again: the works just flagged, and every held work that was scanned again because it changed,
+    # clean or not (its record has no fingerprint yet, so it is left out whatever its files say).
+    again = sorted(set(hits) | (set(left.changed) & set(now)))
+    if again:
+        for key, rows in sorted(hits.items()):
+            print(f'HELD BACK: {key!r}: ' + '; '.join(f'{r[0]} in {r[1]} {r[2]}' for r in rows), flush=True)
+        for key in sorted(set(again) - set(hits)):
+            print(f'STILL HELD BACK: {key!r} changed and scans clean now; it waits for Matt\'s "release"', flush=True)
+        step(f'parse again without the {len(again)} flagged or changed work(s)')
+        shutil.rmtree(out)
+        with leaving_out({**now, **{k: {} for k in again}}, roots) as left:
+            build_db.build(REPO, out, sample, processes, licensed, use_cache=not sample)
+        missing = sorted(set(again) - set(left))
+        if missing:     # (cannot happen: the same catalog was just read)
+            raise SystemExit(f'injection check: could not leave out {missing!r}; nothing was deployed')
+        for key in again:
+            now[key]['fingerprint'] = left[key]
+        injection.save_held(now, path)
+    print(f'injection check: {len(now)} work(s) held back' + (f', {len(hits)} of them new' if hits else ''), flush=True)
+    if not sample:
+        injection.send_alerts(now, path)
+
+
 def build(sample: int, fake: bool, max_dollars: float, processes: int, licensed: Path | None = None) -> Path:
     if not (DATA / 'lexicon.tsv').exists():
         build_lexicon(REPO)
@@ -103,7 +195,7 @@ def build(sample: int, fake: bool, max_dollars: float, processes: int, licensed:
     out = BUILDS / (stamp + ('-sample' if sample else '') + ('-fake' if fake else ''))
     try:
         step('parse works, build library.sqlite')
-        build_db.build(REPO, out, sample, processes, licensed, use_cache=not sample)
+        parse_and_hold(out, sample, processes, licensed)
         step('references')
         references.build(out, REPO, processes, use_cache=not sample)
         if not fake:
@@ -163,22 +255,35 @@ def nightly(max_dollars: float):
             raise SystemExit(f'{repo} HEAD is not origin/main after the pull; nothing was built')
     now, now_licensed = head(REPO), head(licensed)
     last = json.loads(DEPLOYED.read_text()) if DEPLOYED.exists() else {}
-    if last.get('repo_commit') == now and last.get('licensed_commit') == now_licensed:
+    # A held-back work whose hits Matt has allowed, or that he has released, rejoins the library tonight,
+    # even with no new books.
+    held, allowed = injection.load_held(), injection.load_allow()
+    injection.send_alerts(held)      # (an alert that could not be sent last night)
+    released = injection.wants_build(held, allowed)
+    if last.get('repo_commit') == now and last.get('licensed_commit') == now_licensed and not released:
         print(f'books repo unchanged at {now[:10]}, licensed shelf at {now_licensed[:10]}; nothing to do')
         return
+    # Before building too: a run that stops before the deploy (the injection check, the spend cap)
+    # never reaches the prune below, and unpruned builds filled the system disk on 2026-11-14.
+    prune_builds(keep={last.get('build')})
     out = build(sample=0, fake=False, max_dollars=max_dollars, processes=3, licensed=licensed)
     # The office server (mcp.christianopenlibrary.org).
     step('deploy to the office server')
     subprocess.run(['bash', str(ROOT / 'deploy/deploy-office.sh'), 'build', str(out)], check=True)
     # Again, so tonight's embedding cost is on the public cost card (deploy/funding.py) by morning.
     subprocess.run(['bash', str(ROOT / 'deploy/deploy-office.sh'), 'members'], capture_output=True, text=True)
-    # Keep this build and the newest one before it. Skip the LATEST* symlinks and sample builds
-    # (LATEST-sample is the local test setup).
-    olds = sorted(p for p in BUILDS.iterdir()
-                  if p.is_dir() and not p.is_symlink() and p != out and 'sample' not in p.name)
-    for old in olds[:-1]:
-        subprocess.run(['rm', '-rf', '--', str(old)], check=True)
+    prune_builds(keep={out.name})
     step('done')
+
+
+def prune_builds(keep):
+    """Delete old full builds: keep the ones named in keep and the newest other one. Skips the
+    LATEST* symlinks and sample builds (LATEST-sample is the local test setup)."""
+    olds = sorted(p for p in BUILDS.iterdir()
+                  if p.is_dir() and not p.is_symlink() and p.name not in keep and 'sample' not in p.name)
+    for old in olds[:-1]:
+        print(f'deleting old build {old.name}')
+        subprocess.run(['rm', '-rf', '--', str(old)], check=True)
 
 
 def main(argv=None):

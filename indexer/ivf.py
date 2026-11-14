@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import sqlite3
 import time
 import zlib
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .embed import DIMS, DOC_MODEL, QUERY_MODEL, fill, input_keys, iter_inputs, open_cache, save_flat
+from .embed import DIMS, DOC_MODEL, QUERY_MODEL, fill, input_keys, iter_inputs, open_cache, update_flat
 
 RERANK_MODEL = 'rerank-3'
 FAKE_TOKEN_RE = re.compile(r'[a-z]+')
@@ -36,28 +37,61 @@ def fake_embed(text: str, dims: int) -> np.ndarray:
 
 
 def load_vectors(build_dir: Path, model: str, dims: int, fake: bool, save: bool = False):
-    """(passage ids, float16 matrix) in id order. save: keep the vectors as the flat store (full builds)."""
+    """(passage ids in id order, float16 rows, the row of each passage or None when row i is passage i).
+    save (full builds): the rows are the flat store itself, brought up to date and read from disk as needed,
+    so the vectors (1 GB per million passages) are never all in memory; one row may serve several passages."""
     if fake:
         rows = list(iter_inputs(build_dir))
         ids = np.array([pid for pid, _ in rows], dtype=np.int64)
         X = np.zeros((len(rows), dims), dtype=np.float16)
         for i, (_, text) in enumerate(rows):
             X[i] = fake_embed(text, dims)
-        return ids, X
+        return ids, X, None
     pids, keys = input_keys(build_dir, model, dims)
-    X, absent = fill(keys, dims, open_cache())
+    ids = np.array(pids, dtype=np.int64)
+    if save:
+        X, row, absent = update_flat(keys, dims, open_cache())
+    else:
+        (X, absent), row = fill(keys, dims, open_cache()), None
     if absent:
         raise SystemExit(f'P{pids[absent[0]]} has no cached embedding: run python -m indexer.embed {build_dir}')
-    if save:
-        save_flat(keys, X, dims)
-    return np.array(pids, dtype=np.int64), X
+    return ids, X, row
 
 
-def kmeans(X: np.ndarray, k: int, sample: int, iters: int, seed: int = 7) -> np.ndarray:
-    """Spherical k-means on a sample; returns unit-length float32 centroids (k x d)."""
-    rng = np.random.default_rng(seed)
-    idx = rng.choice(len(X), size=min(sample, len(X)), replace=False)
-    S = X[idx].astype(np.float32)
+SWEEP = 16_384                  # rows read at a time
+BUCKET_BYTES = 128 << 20        # vectors.bin is put in order this much at a time
+
+
+def sweep(X, row):
+    """Yields (float16 rows, the passages they belong to, where each passage's row is in them), going through
+    X front to back once: a spinning disk reads that at full speed, and only one piece is in memory."""
+    n = len(X) if row is None else len(row)
+    by_row = None if row is None else np.argsort(row, kind='stable')
+    for a in range(0, len(X), SWEEP):
+        b = min(a + SWEEP, len(X))
+        if row is None:
+            who = np.arange(a, min(b, n))
+        else:
+            who = by_row[np.searchsorted(row, a, sorter=by_row):np.searchsorted(row, b, sorter=by_row)]
+        if len(who):
+            yield np.asarray(X[a:b]), who, (who if row is None else row[who]) - a
+
+
+def pick(X, row, idx: np.ndarray) -> np.ndarray:
+    """The float16 rows of passages idx, in that order (a passage may be asked for more than once)."""
+    want, back = np.unique(idx, return_inverse=True)
+    out = np.empty((len(want), X.shape[1]), dtype=np.float16)
+    slot = np.full(len(X) if row is None else len(row), -1, dtype=np.int64)
+    slot[want] = np.arange(len(want))
+    for block, who, at in sweep(X, row):
+        m = slot[who] >= 0
+        out[slot[who[m]]] = block[at[m]]
+    return out[back.reshape(-1)]
+
+
+def kmeans(S: np.ndarray, k: int, iters: int, rng) -> np.ndarray:
+    """Spherical k-means on the sample S (float32 rows, made unit length in place); returns unit-length
+    float32 centroids (k x d)."""
     S /= np.maximum(np.linalg.norm(S, axis=1, keepdims=True), 1e-9)
     C = S[rng.choice(len(S), size=k, replace=False)].copy()
     for it in range(iters):
@@ -105,32 +139,62 @@ def write_manifest(build_dir: Path) -> dict:
 def build(build_dir: Path, fake: bool, k: int, sample: int, iters: int,
           model: str = DOC_MODEL, dims: int = DIMS, save_flat: bool = False):
     t0 = time.time()
-    ids, X = load_vectors(build_dir, model, dims, fake, save=save_flat and not fake)
+    ids, X, row = load_vectors(build_dir, model, dims, fake, save=save_flat and not fake)
     n = len(ids)
+    if n and ids.max() >= 2**32:
+        raise SystemExit('passage id does not fit in uint32')
     k = max(1, min(k, n // 40))
-    print(f'{n} vectors loaded in {time.time() - t0:.0f}s; clustering into {k} lists', flush=True)
-    C = kmeans(X, k, sample, iters)
+    print(f'{n} vectors ready in {time.time() - t0:.0f}s; clustering into {k} lists', flush=True)
 
-    # quantization scale from a sample (one global scale keeps dot products comparable)
-    rng = np.random.default_rng(11)
-    samp = X[rng.choice(n, size=min(n, 100_000), replace=False)].astype(np.float32)
-    scale = float(127.0 / max(np.percentile(np.abs(samp), 99.999), 1e-6))
+    # Pass 1 over the vectors: the k-means sample and the sample for the quantization scale (one global scale
+    # keeps dot products comparable).
+    rng = np.random.default_rng(7)
+    idx = rng.choice(n, size=min(sample, n), replace=False)
+    idx2 = np.random.default_rng(11).choice(n, size=min(n, 100_000), replace=False)
+    both = pick(X, row, np.concatenate([idx, idx2]))
+    scale = float(127.0 / max(np.percentile(np.abs(both[len(idx):].astype(np.float32)), 99.999), 1e-6))
+    S = both[:len(idx)].astype(np.float32)
+    del both
+    C = kmeans(S, k, iters, rng)
+    del S
 
+    # Pass 2: the list of every passage, and its int8 vector appended to a scratch file per run of lists.
+    per = max(1, -(-k // max(1, -(-n * dims // BUCKET_BYTES))))      # lists per scratch file
+    tmp = build_dir / 'ivf-tmp'
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir()
+    files = [open(tmp / f'{b}.bin', 'wb') for b in range(-(-k // per))]
+    held: list[list[np.ndarray]] = [[] for _ in files]
     assign = np.empty(n, dtype=np.int32)
-    for a in range(0, n, 50_000):
-        block = X[a:a + 50_000].astype(np.float32)
-        assign[a:a + 50_000] = np.argmax(block @ C.T, axis=1)
+    for block, who, at in sweep(X, row):
+        block = block.astype(np.float32)
+        lists = np.argmax(block @ C.T, axis=1).astype(np.int32)[at]
+        assign[who] = lists
+        q = np.clip(np.rint(block * scale), -127, 127).astype(np.int8)[at]
+        for b in np.unique(lists // per):
+            m = lists // per == b
+            files[b].write(q[m].tobytes())
+            held[b].append(who[m])
+    for f in files:
+        f.close()
+    del X, row
     order = np.lexsort((ids, assign))
     counts = np.bincount(assign, minlength=k)
     starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
+    pos = np.empty(n, dtype=np.int64)
+    pos[order] = np.arange(n)
 
+    done = 0
     with open(build_dir / 'vectors.bin', 'wb') as vf:
-        for a in range(0, n, 50_000):
-            rows = order[a:a + 50_000]
-            q = np.clip(np.rint(X[rows].astype(np.float32) * scale), -127, 127).astype(np.int8)
-            vf.write(q.tobytes())
-    if ids.max() >= 2**32:
-        raise SystemExit('passage id does not fit in uint32')
+        for b, f in enumerate(files):
+            who = np.concatenate(held[b]) if held[b] else np.empty(0, dtype=np.int64)
+            q = np.fromfile(f.name, dtype=np.int8).reshape(len(who), dims)
+            out = np.empty_like(q)
+            out[pos[who] - done] = q
+            vf.write(out.tobytes())
+            done += len(who)
+    assert done == n
+    shutil.rmtree(tmp)
     ids[order].astype('<u4').tofile(build_dir / 'ids.bin')
 
     db = sqlite3.connect(build_dir / 'library.sqlite')
@@ -139,10 +203,8 @@ def build(build_dir: Path, fake: bool, k: int, sample: int, iters: int,
     db.executemany('INSERT INTO ivf(cluster, centroid, start, count) VALUES (?,?,?,?)',
                    [(c, C[c].astype('<f4').tobytes(), int(starts[c]), int(counts[c])) for c in range(k)])
     db.execute('UPDATE passages SET vec_pos = NULL')
-    pos = np.empty(n, dtype=np.int64)
-    pos[order] = np.arange(n)
     db.executemany('UPDATE passages SET vec_pos=? WHERE id=?',
-                   [(int(pos[i]), int(ids[i])) for i in range(n)])
+                   ((int(pos[i]), int(ids[i])) for i in range(n)))
     meta = {'embed_model': model, 'query_model': QUERY_MODEL, 'embed_dims': str(dims),
             'embed_dtype': 'int8', 'embed_scale': repr(scale), 'ivf_k': str(k),
             'rerank_model': RERANK_MODEL, 'embed_fake': '1' if fake else '0',

@@ -468,10 +468,10 @@ final class Format
             && Quote::byAuthor($p['work'], Quote::authorWords((string) $r->author))) {
             $lines[] = "FOUND, BUT BY SOMEONE ELSE: the words are in $where, but there $who is quoting $credit: a credit "
                 . "line, \"— $credit\", follows them. Tell the user the words are $credit's as quoted by $who"
-                . ($p['edits'] > 0 ? ' (worded a little differently; see below)' : '') . '.';
+                . ($p['edits'] > 0 || $p['misread'] > 0 ? ' (worded a little differently; see below)' : '') . '.';
         } elseif ($r->verdict === QuoteResult::OTHER_AUTHOR) {
             $lines[] = "FOUND, BUT NOT BY $who: the earliest work in the library with these words is $where"
-                . ($p['edits'] > 0 ? ' (worded a little differently; see below)' : '') . '. '
+                . ($p['edits'] > 0 || $p['misread'] > 0 ? ' (worded a little differently; see below)' : '') . '. '
                 . ($r->authorWorks > 0
                     ? 'None of the library\'s ' . self::plural($r->authorWorks, 'work') . " by $who has them (the library "
                         . 'holds only some of this author\'s writings, so this does not prove the words are not theirs).'
@@ -481,12 +481,18 @@ final class Format
         } elseif ($r->verdict === QuoteResult::EXACT) {
             $lines[] = "FOUND WORD FOR WORD: these words are in $where. Spelling, capitals and punctuation were not "
                 . 'compared; quote the library\'s wording below.';
-            if ($p['misread'] > 0) {
-                $lines[] = 'SCAN: ' . self::plural($p['misread'], 'word') . ' in this book\'s text '
-                    . ($p['misread'] === 1 ? 'differs' : 'differ') . ' from the quotation by a letter or two (marked in '
-                    . 'bold below). The text is uncorrected OCR of a scan, so these are most likely misread letters, not '
-                    . 'different words: check the scan before quoting.';
-            }
+        } elseif ($r->verdict === QuoteResult::SCAN_LETTERS) {
+            $lines[] = "FOUND, BUT " . ($p['misread'] === 1 ? 'A WORD DIFFERS' : 'WORDS DIFFER') . " BY A LETTER: the "
+                . "words are in $where, except that " . self::plural($p['misread'], 'word') . ' in this book\'s text '
+                . ($p['misread'] === 1 ? 'differs' : 'differ') . ' from the quotation by a letter or two (marked in '
+                . 'bold below). The text is uncorrected OCR of a scan, so this may be a misread letter or a different '
+                . 'word: CHECK THE SCAN (link below) before quoting, and do not tell the user the quotation is word for '
+                . 'word until the scan confirms it.';
+        } elseif ($r->verdict === QuoteResult::LEFT_OUT) {
+            $lines[] = "FOUND WITH WORDS LEFT OUT: every word given is in $where, in this order, but with other words "
+                . 'between them where the quotation has "...", and a piece between those marks is only a word or two. '
+                . 'That shows the words occur there, not that the author put it this way: read the passage below, '
+                . 'quote the library\'s wording in full, and do not call the version given word for word.';
         } else {
             $lines[] = "FOUND, BUT WORDED DIFFERENTLY: the closest wording is in $where: {$p['same']} of the {$p['words']} "
                 . 'words given are there in the same order. The real wording and the one given are shown side by side '
@@ -494,7 +500,7 @@ final class Format
         }
         if ($r->verdict !== QuoteResult::OTHER_AUTHOR && $e !== null && $e['work']['id'] !== $p['work']['id']
             && $e['when'] < $p['when'] && Text::looseKey($e['work']['author']) !== Text::looseKey($p['work']['author'])) {
-            $lines[] = 'EARLIER SOURCE: ' . ($e['edits'] === 0 ? 'the same words are' : 'similar words are')
+            $lines[] = 'EARLIER SOURCE: ' . ($e['edits'] === 0 && $e['misread'] === 0 ? 'the same words are' : 'similar words are')
                 . ' in an earlier work, ' . self::quoteWhere($e) . '. '
                 . ($who !== null ? "$who may have been quoting or echoing it; say so." : 'The later writer may have been quoting it.');
         }
@@ -548,8 +554,11 @@ final class Format
     private static function quoteMatchLabel(array $m): string
     {
         if ($m['edits'] === 0) {
-            return 'word for word' . ($m['misread'] > 0 ? ' (apart from ' . self::plural($m['misread'], 'likely misreading')
-                . ' in the scan)' : '');
+            if ($m['misread'] > 0) {
+                return self::plural($m['misread'], 'word') . ' ' . ($m['misread'] === 1 ? 'differs' : 'differ')
+                    . ' by a letter (check the scan), the rest word for word';
+            }
+            return ($m['thin_pieces'] ?? false) ? 'every word, with words left out between them' : 'word for word';
         }
         return "{$m['same']} of {$m['words']} words the same";
     }

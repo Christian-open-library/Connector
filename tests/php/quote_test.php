@@ -249,3 +249,91 @@ function test_retellings(): void
     $r = Quote::retold("He heard the child, took the book, and was converted. — Bernard.", $spurgeon, $writers, $tolle, $same);
     assert_same('Bernard', $r['name'] ?? null, 'credit line');
 }
+
+
+// ---------------------------------------------------------------------------------------------
+// Security sweep 2026-11-14, findings 18 and 19: "word for word" is said only when it is.
+
+/** The fixture with Augustine's Confessions marked as uncorrected OCR of a scan, and four dictionary headwords. */
+function scan_dir(): string
+{
+    static $dir = null;
+    if ($dir !== null) {
+        return $dir;
+    }
+    Fixture\store_or_skip();
+    $dir = col_tmpdir('scan');
+    foreach (['library.sqlite', 'vectors.bin', 'ids.bin', 'manifest.json', 'config.php'] as $f) {
+        if (is_file(Fixture\DIR . "/$f")) {
+            copy(Fixture\DIR . "/$f", "$dir/$f");
+        }
+    }
+    $db = new \PDO("sqlite:$dir/library.sqlite");
+    $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+    $db->exec('UPDATE works SET ocr = 1 WHERE id = 103');
+    $st = $db->prepare("INSERT INTO dictionary(source, headword, norm, text) VALUES ('wilson1661', ?, ?, ?)");
+    foreach (['power', 'tower', 'end', 'and'] as $w) {
+        $st->execute([ucfirst($w), $w, (string) gzcompress('an ordinary word')]);
+    }
+    $db = null;
+    return $dir;
+}
+
+function scan(array $args): string
+{
+    $r = Tools::call('check_quote', $args, Fixture\context(['data_dir' => scan_dir()]));
+    assert_false($r['isError'], Fixture\text_of($r));
+    return Fixture\text_of($r);
+}
+
+function test_a_word_passed_as_a_misreading_is_never_word_for_word(): void
+{
+    // "wisdorn" for the book's "wisdom": a letter apart and not a word, so it is taken as a misreading of the scan.
+    $text = scan(['quote' => 'great is Thy power, and of Thy wisdorn there is no end', 'author' => 'Augustine']);
+    assert_not_contains('FOUND WORD FOR WORD', $text);
+    assert_contains('FOUND, BUT A WORD DIFFERS BY A LETTER: the words are in Augustine', $text);
+    assert_contains('CHECK THE SCAN', $text);
+    assert_contains('do not tell the user the quotation is word for word', $text);
+    assert_contains('Match: 1 word differs by a letter (check the scan), the rest word for word', $text);
+    assert_contains('**wisdom**', $text, 'the word is marked');
+    // The same quotation of a book that is not a scan was never called word for word, and still is not.
+    $plain = ok(['quote' => 'great is Thy power, and of Thy wisdorn there is no end', 'author' => 'Augustine']);
+    assert_contains('FOUND, BUT WORDED DIFFERENTLY', $plain);
+    // With every word right, a scanned book still gives the plain verdict.
+    assert_contains('FOUND WORD FOR WORD', scan(['quote' => 'great is Thy power, and of Thy wisdom there is no end']));
+}
+
+function test_two_ordinary_words_are_a_difference_not_a_misreading(): void
+{
+    // "tower" for "power": one letter apart, but both are ordinary words (dictionary headwords).
+    $text = scan(['quote' => 'great is Thy tower, and of Thy wisdom there is no end', 'author' => 'Augustine']);
+    assert_contains('FOUND, BUT WORDED DIFFERENTLY', $text);
+    assert_not_contains('FOUND WORD FOR WORD', $text);
+    assert_not_contains('DIFFERS BY A LETTER', $text);
+    assert_contains('"tower" for "power"', $text);
+    assert_contains('SCAN: this book\'s text is uncorrected OCR', $text, 'the reader is still told it is a scan');
+    // Very common words count as ordinary without a dictionary: "not", "the".
+    $q = new Quote(Fixture\store_or_skip(scan_dir()), Fixture\fake_voyage(Fixture\store_or_skip(scan_dir())), microtime(true) + 20);
+    $real = (new \ReflectionMethod($q, 'realWords'))->invoke($q, ['not', 'the', 'power', 'tower', 'liis', 'tbe', 'wisdorn']);
+    assert_same(['not', 'the', 'power', 'tower'], array_keys($real));
+    assert_same(['power' => true], (new \ColLibrary\Store(scan_dir()))->headwords(['power', 'liis']));
+}
+
+function test_single_words_joined_by_gaps_are_not_word_for_word(): void
+{
+    $text = ok(['quote' => 'Great ... Lord ... greatly ... praised', 'author' => 'Augustine']);
+    assert_not_contains('FOUND WORD FOR WORD', $text);
+    assert_contains('FOUND WITH WORDS LEFT OUT: every word given is in Augustine', $text);
+    assert_contains('do not call the version given word for word', $text);
+    assert_contains('Match: every word, with words left out between them', $text);
+    // One real phrase and a stray word: still not word for word.
+    $text = ok(['quote' => 'Great art Thou, O Lord ... restless', 'author' => 'Augustine']);
+    assert_contains('FOUND WITH WORDS LEFT OUT', $text);
+    // Real phrases (three or more words) on each side keep the plain verdict.
+    $text = ok(['quote' => 'Great art Thou, O Lord ... our heart is restless', 'author' => 'Augustine']);
+    assert_contains('FOUND WORD FOR WORD', $text);
+    assert_same(\ColLibrary\QuoteResult::LEFT_OUT, Quote::verdict(['edits' => 0, 'misread' => 0, 'thin_pieces' => true]));
+    assert_same(\ColLibrary\QuoteResult::SCAN_LETTERS, Quote::verdict(['edits' => 0, 'misread' => 1, 'thin_pieces' => true]));
+    assert_same(\ColLibrary\QuoteResult::REWORDED, Quote::verdict(['edits' => 1, 'misread' => 1]));
+    assert_same(\ColLibrary\QuoteResult::EXACT, Quote::verdict(['edits' => 0, 'misread' => 0, 'thin_pieces' => false]));
+}

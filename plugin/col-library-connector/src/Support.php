@@ -74,6 +74,12 @@ final class Support
         }
         $funding = [];
         $path = (string) ($oauth['members_file'] ?? '');
+        $theme = in_array($query['theme'] ?? '', ['light', 'site'], true) ? $query['theme'] : 'dark';
+        $key = hash('sha256', $path . '|' . (string) @filemtime($path) . '|' . (string) @filesize($path));
+        $kept = self::cached($theme, $key, $config);
+        if ($kept !== null) {
+            return new Response(200, self::HEADERS, $kept);
+        }
         if ($path !== '' && is_file($path)) {
             $d = json_decode((string) @file_get_contents($path, false, null, 0, 2_000_000), true, 32);
             $funding = is_array($d) && is_array($d['funding'] ?? null) ? $d['funding'] : [];
@@ -87,13 +93,52 @@ final class Support
         } catch (\Throwable $e) {
             error_log('col-library-connector: cost card without search costs: ' . $e->getMessage());
         }
-        $theme = in_array($query['theme'] ?? '', ['light', 'site'], true) ? $query['theme'] : 'dark';
-        return new Response(200, [
-            'Content-Type' => 'image/svg+xml; charset=utf-8',
-            'Cache-Control' => 'public, max-age=600',   // Cloudflare keeps it 10 minutes
-            'X-Content-Type-Options' => 'nosniff',
-            'Content-Security-Policy' => "default-src 'none'; style-src 'unsafe-inline'",
-        ], self::card(self::ledger($funding, $spending, time(), $recent), $theme));
+        $svg = self::card(self::ledger($funding, $spending, time(), $recent), $theme);
+        self::keep($theme, $key, $svg, $config);
+        return new Response(200, self::HEADERS, $svg);
+    }
+
+    private const HEADERS = [
+        'Content-Type' => 'image/svg+xml; charset=utf-8',
+        'Cache-Control' => 'public, max-age=600',   // Cloudflare keeps it 10 minutes
+        'X-Content-Type-Options' => 'nosniff',
+        'Content-Security-Policy' => "default-src 'none'; style-src 'unsafe-inline'",
+    ];
+    private const CACHE_SECONDS = 600;
+
+    /**
+     * The card kept for CACHE_SECONDS in the state folder, one file per theme. Cloudflare's copy is keyed by
+     * the whole address, so any made-up query string ("?x=1", "?x=2", ...) used to reach this code and its
+     * database reads every time; now only the theme (three values) and the member file's date decide which
+     * picture is sent, whatever else the address carries.
+     */
+    private static function cached(string $theme, string $key, ?Config $config): ?string
+    {
+        try {
+            $file = ($config ?? Config::load())->stateDir() . "/support-card-$theme.svg";
+            $at = @filemtime($file);
+            if ($at === false || time() - $at >= self::CACHE_SECONDS || time() < $at) {
+                return null;
+            }
+            $text = (string) @file_get_contents($file, false, null, 0, 1_000_000);
+            $head = "<!--$key-->";
+            return str_starts_with($text, $head) ? substr($text, strlen($head)) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private static function keep(string $theme, string $key, string $svg, ?Config $config): void
+    {
+        try {
+            $file = ($config ?? Config::load())->stateDir() . "/support-card-$theme.svg";
+            $tmp = $file . '.' . bin2hex(random_bytes(4)) . '.tmp';
+            if (@file_put_contents($tmp, "<!--$key-->" . $svg) === false || !@rename($tmp, $file)) {
+                @unlink($tmp);
+            }
+        } catch (\Throwable) {
+            // no cache: the card is built each time, as before
+        }
     }
 
     /**
@@ -445,6 +490,9 @@ SVG;
 
     private static function esc(string $s): string
     {
+        // XML 1.0 allows no control characters but tab, line feed and carriage return: one in a name would
+        // make the whole picture ill-formed, so they become spaces.
+        $s = (string) preg_replace('/[\x00-\x1F\x7F]|\xC2[\x80-\x9F]|\xEF\xBF[\xBE\xBF]/', ' ', $s);
         return htmlspecialchars($s, ENT_QUOTES | ENT_XML1 | ENT_SUBSTITUTE, 'UTF-8');
     }
 }

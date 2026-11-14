@@ -318,6 +318,7 @@ final class Churches
     {
         $ancestors = array_column($c['ancestors'], 0);
         $own = isset($bodies[$name]) || array_intersect($direct, $ancestors) !== [];
+        $shown = self::plainName($name);     // names come from the books repo's lists: made inert like all library text
         $parts = [];
         foreach ($c['ancestors'] as [$body, $from, $to]) {
             if (!isset($bodies[$body]) || $body === $name || ($own && in_array($body, $direct, true))) {
@@ -327,8 +328,8 @@ final class Churches
                 : ($from !== null ? ", records from $from" : ''));
             $parts[] = self::bodyName($body, $bodies) . $limit;
         }
-        $bare = preg_replace('/^The\s+/', '', $name) ?? $name;
-        $label = self::key($echo) === self::key($bare) || self::key($echo) === self::key($name) ? $name
+        $bare = self::plainName(preg_replace('/^The\s+/', '', $name) ?? $name);
+        $label = self::key($echo) === self::key($bare) || self::key($echo) === self::key($name) ? $shown
             : "$echo (the $bare)";
         $as = array_values(array_filter($direct, static fn (string $b): bool => $b !== $name));
         $lead = $own
@@ -350,9 +351,15 @@ final class Churches
     {
         $b = $bodies[$name] ?? null;
         if ($b === null || ($b['founded'] === null && $b['ended'] === null)) {
-            return $name;
+            return self::plainName($name);
         }
-        return $name . ' (' . ($b['founded'] ?? '') . '–' . ($b['ended'] ?? '') . ')';
+        return self::plainName($name) . ' (' . ($b['founded'] ?? '') . '–' . ($b['ended'] ?? '') . ')';
+    }
+
+    /** A body's name as printed in a note: one line, and inert for Markdown and HTML (Text::inert). */
+    private static function plainName(string $name): string
+    {
+        return Text::inert(Text::oneLine($name, 200));
     }
 
     /** The error for a denomination the library does not know: what it has, by tradition, and the names it knows. */
@@ -367,7 +374,7 @@ final class Churches
         }
         $by = [];
         foreach ($store->churchBodies() as $name => $b) {
-            $by[$b['tradition']][] = $name . (isset($present[$name]) ? ' (present-day documents, used by permission)' : '');
+            $by[$b['tradition']][] = self::plainName((string) $name) . (isset($present[$name]) ? ' (present-day documents, used by permission)' : '');
         }
         $lines = [];
         foreach (self::TRADITIONS as $t) {
@@ -378,7 +385,7 @@ final class Churches
         $known = [];
         foreach ($store->churchNames() as $name => $c) {
             $abbr = array_values(array_filter($c['aliases'], static fn (string $a): bool => preg_match('/^[A-Z][A-Z()]{1,7}$/', $a) === 1));
-            $known[] = $abbr !== [] ? $abbr[0] : $name;
+            $known[] = $abbr !== [] ? $abbr[0] : self::plainName((string) $name);
         }
         return "NOT FOUND: the library has no church records filed under \"$echo\". Do not search other bodies' records "
             . 'as if they were this one\'s. The church bodies whose records the library holds (historical editions '

@@ -58,7 +58,9 @@ case "${1:-}" in
     for f in manifest.json library.sqlite vectors.bin ids.bin; do [ -f "$dir/$f" ] || { echo "missing $dir/$f" >&2; exit 1; }; done
     # Text aimed at an AI (THREAT-MODEL.md, T3): every passage reaches someone's AI chat, so a build with an
     # unreviewed hit is not deployed. Reviewed false positives: indexer/injection-allow.tsv. Book text in the
-    # output is printed without control characters.
+    # output is printed without control characters. The build step (indexer/pipeline.py) has already left
+    # out any work with such a hit, so this finds nothing new unless that step was skipped or the hit is in
+    # a Bible or dictionary: it is the last check, and it stays all-or-nothing.
     echo "--- $(date +%H:%M:%S) injection check"
     if ! scan=$(.venv/bin/python -m indexer.injection "$dir" 2>&1); then
         printf '%s\n' "$scan" | head -n 40 | tr -d '\000-\010\013-\037\177' >&2

@@ -39,6 +39,34 @@ class FlatStore(unittest.TestCase):
         for i, k in enumerate(want[:-1]):
             self.assertEqual(X1[i].tobytes(), self.vecs[k])
 
+    def test_update_flat_writes_what_save_flat_would(self):
+        want = self.keys[100:] + self.keys[120:130]          # this build: some old, some new, duplicates
+        for start in ('none', 'half', 'same'):
+            p = embed.flat_path(8)
+            p.unlink(missing_ok=True)
+            if start == 'half':                              # last build: keys 0-149
+                half = self.keys[:150]
+                embed.save_flat(half, np.stack([np.frombuffer(self.vecs[k], np.float16) for k in half]), 8)
+            if start == 'same':
+                embed.update_flat(want, 8, self.cache)
+            X, row, absent = embed.update_flat(want, 8, self.cache, chunk=7)
+            self.assertEqual(absent, [])
+            for i, k in enumerate(want):
+                self.assertEqual(X[row[i]].tobytes(), self.vecs[k])
+            got = p.read_bytes()
+            del X
+            embed.save_flat(want, np.stack([np.frombuffer(self.vecs[k], np.float16) for k in want]), 8)
+            self.assertEqual(got, p.read_bytes(), start)
+
+    def test_update_flat_keeps_the_old_store_when_a_vector_is_missing(self):
+        embed.save_flat(self.keys, np.stack([np.frombuffer(self.vecs[k], np.float16) for k in self.keys]), 8)
+        before = embed.flat_path(8).read_bytes()
+        X, row, absent = embed.update_flat(self.keys[:5] + ['0' * 40, self.keys[9]], 8, self.cache)
+        self.assertIsNone(X)
+        self.assertEqual(absent, [5])
+        self.assertEqual(before, embed.flat_path(8).read_bytes())
+        self.assertFalse(embed.flat_path(8).with_suffix('.tmp').exists())
+
     def test_a_damaged_flat_store_is_ignored(self):
         embed.save_flat(self.keys, np.stack([np.frombuffer(self.vecs[k], np.float16) for k in self.keys]), 8)
         p = embed.flat_path(8)

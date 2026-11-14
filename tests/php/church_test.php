@@ -313,3 +313,209 @@ function test_licensed_read_passage_is_limited(): void
     assert_not_contains('used by permission', Fixture\text_of($r), 'other works keep the full range');
     assert_same(7, preg_match_all('/^P\d+\b/m', Fixture\text_of($r)));
 }
+
+// ---------------------------------------------------------------------------------------------
+// The licensed shelf's cap holds in every tool (src/Licensed.php; security sweep 2026-11-14, finding 17).
+
+/** A context on the licensed build whose daily count of licensed passages is $perDay; reuse it to share the count. */
+function licensed_ctx(int $perDay = 100): \ColLibrary\Context
+{
+    $cfg = Fixture\config(['data_dir' => licensed_dir()]);
+    $log = \ColLibrary\Log::fromConfig($cfg);
+    $limits = new \ColLibrary\RateLimit($cfg->stateDir(), 100000, 1000000, $cfg->maxVoyageTokensPerDay(), $log,
+        fn () => Fixture\FIXED_TIME, null, \ColLibrary\RateLimit::PERSON_VOYAGE_DEFAULT, $perDay);
+    return new \ColLibrary\Context($cfg, $limits, $log, microtime(true) + 25.0);
+}
+
+/** Refs of the passages a result prints in full ("[1] P10300000 ·" in a search, "P10300000 ·" in read_passage). */
+function shown_refs(string $text): array
+{
+    preg_match_all('/^(?:\[\d+\] )?P(\d+)\b/m', $text, $m);
+    return array_map('intval', $m[1]);
+}
+
+function of_work(array $refs, int $work): array
+{
+    return array_values(array_filter($refs, static fn (int $id): bool => intdiv($id, 100000) === $work));
+}
+
+function test_licensed_search_gives_a_few_passages_of_a_work_even_when_it_is_named(): void
+{
+    foreach ([['mode' => 'best']] as $mode) {     // (exact mode: the next test; no distinctive word is in four passages)
+        $args = ['query' => 'God', 'work_id' => 103, 'limit' => 20] + $mode;
+        $public = of_work(shown_refs(Fixture\text_of(call('search_library', $args))), 103);
+        if (count($public) <= \ColLibrary\Licensed::PER_WORK) {
+            col_skip('the fixture work has too few passages with the word');
+        }
+        $r = Tools::call('search_library', $args, licensed_ctx());
+        $text = Fixture\text_of($r);
+        assert_false($r['isError'], $text);
+        $kept = of_work(shown_refs($text), 103);
+        assert_same(array_slice($public, 0, 3), $kept, $mode['mode'] . ': the first three, in the same order');
+        assert_contains('Documents used by permission: at most 3 passages of one such document are returned per call, so '
+            . (count($public) - 3 === 1 ? '1 passage was' : (count($public) - 3) . ' passages were') . ' left out.', $text);
+        assert_contains('"Official copy" (*The Confessions*: https://urcna.org/church-order)', $text);
+        // Public-domain works are served exactly as before, by the same code and with the same daily count running.
+        $again = Tools::call('search_library', ['query' => 'God', 'work_id' => 101, 'limit' => 20] + $mode, licensed_ctx(0));
+        assert_same(Fixture\text_of(call('search_library', ['query' => 'God', 'work_id' => 101, 'limit' => 20] + $mode)),
+            Fixture\text_of($again), 'a public-domain work is untouched, even with the licensed count at its limit');
+    }
+    // Without work_id: a mixed result keeps its public-domain passages and at most three of each licensed work.
+    $r = Tools::call('search_library', ['query' => 'God', 'limit' => 20, 'mode' => 'exact'], licensed_ctx());
+    $refs = shown_refs(Fixture\text_of($r));
+    assert_true(count(of_work($refs, 103)) <= 3 && count(of_work($refs, 104)) <= 3);
+    $plain = shown_refs(Fixture\text_of(call('search_library', ['query' => 'God', 'limit' => 20, 'mode' => 'exact'])));
+    assert_same(array_merge(of_work($plain, 101), of_work($plain, 102)), array_merge(of_work($refs, 101), of_work($refs, 102)));
+}
+
+function test_licensed_works_cannot_be_paged_through_in_exact_mode(): void
+{
+    // A phrase of only common words: the whole document in book order, before the fix.
+    $r = Tools::call('search_library', ['query' => 'and', 'work_id' => 103, 'mode' => 'exact', 'limit' => 20], licensed_ctx());
+    $text = Fixture\text_of($r);
+    assert_true($r['isError'], $text);
+    assert_same([], shown_refs($text));
+    assert_contains('Documents used by permission are not paged through in exact mode: a phrase of only common words', $text);
+    assert_contains('https://urcna.org/church-order', $text);
+    $public = call('search_library', ['query' => 'and', 'work_id' => 103, 'mode' => 'exact', 'limit' => 20]);
+    assert_false($public['isError'], 'the same search on the public-domain copy still works');
+    assert_true(count(shown_refs(Fixture\text_of($public))) > 3);
+    // Deep offsets: Licensed::limit leaves out licensed matches after the first EXACT_DEPTH.
+    $hit = static fn (int $id, string $collection): array => ['id' => $id, 'work' => ['id' => intdiv($id, 100000),
+        'collection' => $collection, 'title' => 'T', 'source_url' => 'https://example.org/official']];
+    $limits = licensed_ctx()->limits;
+    $five = array_map(static fn (int $i) => $hit(10300000 + $i, 'licensed'), range(0, 4));
+    $kept = \ColLibrary\Licensed::limit($five, $limits, 0, true);
+    assert_same([10300000, 10300001, 10300002], array_column($kept['hits'], 'id'), 'three of one work per call in exact mode');
+    assert_contains('at most 3 passages of one such document are returned per call, so 2 passages were left out', $kept['notes'][0]);
+    // A distinctive word still finds its passages in a licensed work.
+    $r = Tools::call('search_library', ['query' => 'heart', 'work_id' => 103, 'mode' => 'exact', 'limit' => 20], licensed_ctx());
+    assert_same(shown_refs(Fixture\text_of(call('search_library', ['query' => 'heart', 'work_id' => 103, 'mode' => 'exact', 'limit' => 20]))),
+        shown_refs(Fixture\text_of($r)));
+    $kept = \ColLibrary\Licensed::limit([$hit(10300018, 'licensed'), $hit(10100019, 'ccel'), $hit(10300020, 'licensed'),
+        $hit(10300021, 'licensed')], $limits, 18, true);
+    assert_same([10300018, 10100019], array_column($kept['hits'], 'id'), 'matches 21 and later of a licensed work are left out');
+    assert_same(2, $kept['dropped']);
+    $kept = \ColLibrary\Licensed::limit([$hit(10300018, 'licensed'), $hit(10300020, 'licensed')], $limits, 18, false);
+    assert_same(0, $kept['dropped'], 'the depth rule is for exact mode');
+    $kept = \ColLibrary\Licensed::limit([$hit(10100001, 'ccel'), $hit(10200001, 'eebo-tcp')], licensed_ctx(0)->limits, 500, true, true);
+    assert_same(['hits' => [$hit(10100001, 'ccel'), $hit(10200001, 'eebo-tcp')], 'notes' => [], 'dropped' => 0], $kept);
+}
+
+function test_licensed_passages_are_counted_per_person_per_day_in_every_tool(): void
+{
+    $store = new Store(licensed_dir());
+    $range = $store->passageRange(103);
+    if ($range === null || $range[1] - $range[0] < 6) {
+        col_skip('the fixture work is too short');
+    }
+    $mid = $range[0] + 3;
+    $ctx = licensed_ctx(8);
+    $r = Tools::call('read_passage', ['ref' => "P$mid", 'before' => 2, 'after' => 3], $ctx);
+    assert_same(6, count(shown_refs(Fixture\text_of($r))), 'six of the day\'s eight');
+    assert_contains('at most 8 passages of such documents a day', Fixture\text_of(
+        Tools::call('read_passage', ['ref' => "P$mid", 'before' => 9, 'after' => 0], licensed_ctx(8))), 'the number is said');
+    // Two left: the requested passage and the one after it; the pointers still lead to the rest.
+    $r = Tools::call('read_passage', ['ref' => "P$mid", 'before' => 2, 'after' => 3], $ctx);
+    $text = Fixture\text_of($r);
+    assert_false($r['isError'], $text);
+    assert_same([$mid, $mid + 1], shown_refs($text));
+    assert_contains('this account has reached today\'s limit of 8 passages from them', $text);
+    assert_contains('The limit resets at 00:00 UTC.', $text);
+    assert_contains('Official copy: https://urcna.org/church-order', $text);
+    assert_contains('Earlier text: ref P' . ($mid - 1), $text);
+    assert_contains('Later text: ref P' . ($mid + 2), $text);
+    // Nothing left: every tool leaves licensed text out and points to the official copy.
+    $r = Tools::call('read_passage', ['ref' => "P$mid"], $ctx);
+    assert_true($r['isError']);
+    assert_same([], shown_refs(Fixture\text_of($r)));
+    assert_contains('today\'s limit of 8 passages', Fixture\text_of($r));
+    assert_contains('Official copy: https://urcna.org/church-order', Fixture\text_of($r));
+    foreach ([['mode' => 'best'], ['mode' => 'exact']] as $mode) {
+        $r = Tools::call('search_library', ['query' => 'God', 'work_id' => 103] + $mode, $ctx);
+        assert_true($r['isError'], $mode['mode']);
+        assert_same([], shown_refs(Fixture\text_of($r)));
+        assert_contains('today\'s limit of 8 passages', Fixture\text_of($r));
+        $r = Tools::call('search_library', ['query' => 'God', 'limit' => 20] + $mode, $ctx);
+        $refs = shown_refs(Fixture\text_of($r));
+        assert_same([], array_merge(of_work($refs, 103), of_work($refs, 104)), 'no licensed passage in a mixed result');
+        assert_true(count($refs) > 0, 'the public-domain passages are still served');
+    }
+    $quote = ['quote' => 'for Thou hast made us for Thyself, and our heart is restless'];
+    $with = Fixture\text_of(Tools::call('check_quote', $quote, licensed_ctx(8)));
+    assert_contains('Thou movest us to delight in praising Thee', $with, 'the text around the words, within the limit');
+    $without = Fixture\text_of(Tools::call('check_quote', $quote, $ctx));
+    assert_contains('FOUND WORD FOR WORD', $without, 'the verdict stays');
+    assert_not_contains('Thou movest us to delight in praising Thee', $without);
+    assert_contains('The text around the words is left out. Official copy: https://urcna.org/church-order', $without);
+    // The count is the person's: another person (another state) starts at nought; public-domain reads never count.
+    $r = Tools::call('read_passage', ['ref' => 'P10100003', 'before' => 3, 'after' => 3], $ctx);
+    assert_same(7, count(shown_refs(Fixture\text_of($r))));
+}
+
+function test_licensed_citations_are_capped_and_counted(): void
+{
+    $store = new Store(licensed_dir());
+    $db = new \PDO('sqlite:' . licensed_dir() . '/library.sqlite');
+    $row = $db->query('SELECT b.name, s.chapter, count(DISTINCT s.passage_id) n FROM scripture_refs s
+        JOIN passages p ON p.id = s.passage_id JOIN bible_books b ON b.id = s.book
+        WHERE p.work_id IN (103, 104) GROUP BY s.book, s.chapter ORDER BY n DESC LIMIT 1')->fetch(\PDO::FETCH_NUM);
+    $db = null;
+    if ($row === false) {
+        col_skip('the fixture\'s licensed works cite no scripture');
+    }
+    $args = ['reference' => $row[0] . ' ' . $row[1], 'limit' => 20];
+    $public = shown_refs(Fixture\text_of(call('find_scripture_citations', $args)));
+    $r = Tools::call('find_scripture_citations', $args, licensed_ctx());
+    $refs = shown_refs(Fixture\text_of($r));
+    assert_true(count(of_work($refs, 103)) <= 3 && count(of_work($refs, 104)) <= 3);
+    assert_same(array_merge(of_work($public, 101), of_work($public, 102)), array_merge(of_work($refs, 101), of_work($refs, 102)));
+    $r = Tools::call('find_scripture_citations', $args + ['work_id' => 103], licensed_ctx());
+    assert_true(count(shown_refs(Fixture\text_of($r))) <= 3, 'also when the work is named');
+    $r = Tools::call('find_scripture_citations', $args, licensed_ctx(0));
+    $refs = shown_refs(Fixture\text_of($r));
+    assert_same([], array_merge(of_work($refs, 103), of_work($refs, 104)), 'the daily count holds here too');
+    assert_contains('today\'s limit of 0 passages', Fixture\text_of($r));
+}
+
+function test_the_licensed_count_fails_closed_and_is_per_person(): void
+{
+    $dir = col_tmpdir('lic');
+    $mk = static fn (?array $link): \ColLibrary\RateLimit => new \ColLibrary\RateLimit($dir, 100, 1000, 1000, null,
+        fn () => Fixture\FIXED_TIME, $link, \ColLibrary\RateLimit::PERSON_VOYAGE_DEFAULT, 5);
+    $a = $mk(['id' => 'aaaa', 'calls_per_day' => 10, 'calls_per_minute' => 10]);
+    assert_same(3, $a->takeLicensed(3));
+    assert_same(2, $a->takeLicensed(3), 'only what is left');
+    assert_same(0, $a->takeLicensed(1));
+    assert_same(5, $mk(['id' => 'bbbb', 'calls_per_day' => 10, 'calls_per_minute' => 10])->takeLicensed(9), 'another person');
+    assert_same(0, $a->takeLicensed(0));
+    $broken = new \ColLibrary\RateLimit('/nonexistent/' . bin2hex(random_bytes(4)) . "/\0", 100, 1000, 1000);
+    assert_same(0, @$broken->takeLicensed(2), 'no count, no licensed text');
+    assert_same(100, \ColLibrary\Config::fromArray(['url_key' => 'Zx9_-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG',
+        'data_dir' => $dir, 'state_dir' => $dir])->maxLicensedPassagesPerPersonPerDay(), 'the default');
+}
+
+function test_church_body_names_are_inert_in_notes(): void
+{
+    $dir = col_tmpdir('inert');
+    foreach (['library.sqlite', 'vectors.bin', 'ids.bin', 'manifest.json', 'config.php'] as $f) {
+        if (is_file(church_dir() . "/$f")) {
+            copy(church_dir() . "/$f", "$dir/$f");
+        }
+    }
+    $db = new \PDO("sqlite:$dir/library.sqlite");
+    $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+    $evil = 'Church of ![x](https://evil.example/p?d=1) <img src=x>';
+    $db->prepare("INSERT INTO church_bodies VALUES (?, 'Reformed', 1900, NULL, ?, ?, 1)")
+        ->execute([$evil, json_encode([$evil]), json_encode(['EVILCHURCH'])]);
+    $db->prepare("INSERT INTO church_records VALUES (104, ?, 'Reformed', 'confession', 'historical')
+                  ON CONFLICT(work_id) DO UPDATE SET denomination = excluded.denomination")->execute([$evil]);
+    $db = null;
+    foreach ([['search_library', ['query' => 'grace', 'denomination' => 'EVILCHURCH']],
+              ['find_works', ['denomination' => 'Druids of Gaul']]] as [$tool, $args]) {
+        $text = Fixture\text_of(Tools::call($tool, $args, Fixture\context(['data_dir' => $dir])));
+        assert_contains('Church of', $text, $tool);
+        assert_not_contains('![x](', $text, "$tool: no image can form");
+        assert_not_contains(' <img', $text, "$tool: no tag can form");
+    }
+}

@@ -5,7 +5,8 @@
 #
 # Runs `python -m indexer.pipeline nightly`: pull the books repo; if its commit differs from the one
 # in data/deployed.json, rebuild, embed only the new passages (the embedding cache keeps the rest,
-# at most $3 per night), rebuild the vector index, verify, and deploy with deploy/deploy.sh.
+# at most $3 per night), rebuild the vector index, verify, and deploy with deploy/deploy-office.sh.
+# A work with a new hit in the injection check is left out and the rest goes live (indexer/injection.py).
 # Around it:
 #  - a lock (data/update.lock): one run at a time; a run that finds the lock held exits quietly;
 #  - low CPU and disk priority, and a time limit of 6 hours;
@@ -55,8 +56,9 @@ if [ "${#logs[@]}" -gt "$KEEP_LOGS" ]; then
     rm -f -- "${logs[@]:0:${#logs[@]}-KEEP_LOGS}"
 fi
 
-# One line for a watchdog (THREAT-MODEL.md, T3 and T8): "ok|failed <epoch> <exit> <log>". A deploy the
-# injection check blocks fails here, so a stale library shows up instead of passing silently.
+# One line for a watchdog (THREAT-MODEL.md, T3 and T8): "ok|failed <epoch> <exit> <log>". A build the
+# injection check stops (more than a stray sentence: injection.why_stop) fails here, so a stale library
+# shows up instead of passing silently. A held-back work is not a failure: Matt gets its own phone alert.
 STATUS_FILE="$HOME/.local/state/library-update.status"
 mkdir -p "$(dirname "$STATUS_FILE")"
 if [ "$status" = 0 ]; then word=ok; else word=failed; fi

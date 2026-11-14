@@ -326,3 +326,48 @@ function test_site_theme_matches_the_website_and_follows_dark_mode(): void
     $dark = Support::card(Support::ledger(fixed_months([]), [], NOV_15), 'site-dark');
     assert_same(false, str_contains($dark, '#1e1f23'), 'site-dark is not a public theme');
 }
+
+
+// Security sweep 2026-11-14, finding 23.
+function test_the_card_is_kept_ten_minutes_whatever_the_query_string(): void
+{
+    $dir = col_tmpdir();
+    $members = $dir . '/members.json';
+    $write = static fn (int $cents) => file_put_contents($members, json_encode(['members' => [], 'blocked' => [],
+        'funding' => ['months' => [gmdate('Y-m') => ['given_cents' => $cents, 'costs' => [['Domain name', 87]]]]]]));
+    $write(1234);
+    $config = Config::fromArray(['url_key' => 'Zx9_-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG', 'voyage_api_key' => 'pa-voyage-secret-0123456789', 'data_dir' => $dir, 'state_dir' => $dir]);
+    $first = Support::response('GET', [], ['members_file' => $members], $config);
+    assert_true(is_file("$dir/support-card-dark.svg"));
+    // Poison the kept copy: if the next requests print it, they did not rebuild the card.
+    $kept = (string) file_get_contents("$dir/support-card-dark.svg");
+    file_put_contents("$dir/support-card-dark.svg", str_replace('$12.34', '$KEPT', $kept));
+    touch("$dir/support-card-dark.svg", time());
+    foreach ([[], ['x' => '1'], ['x' => '2', 'v' => 'abc'], ['theme' => 'nonsense', 'y' => ['a']]] as $query) {
+        $r = Support::response('GET', $query, ['members_file' => $members], $config);
+        assert_contains('$KEPT', $r->body, 'a made-up query string gets the kept card');
+        assert_same($first->headers, $r->headers);
+        assert_true(str_starts_with($r->body, '<svg') || str_starts_with($r->body, '<?xml'), 'the key line is not sent');
+    }
+    assert_contains('$12.34', Support::response('GET', ['theme' => 'light'], ['members_file' => $members], $config)->body,
+        'each theme has its own copy');
+    // An older copy, or a changed member file, is not used.
+    touch("$dir/support-card-dark.svg", time() - 601);
+    assert_contains('$12.34', Support::response('GET', ['x' => '3'], ['members_file' => $members], $config)->body);
+    $write(5678);
+    touch($members, time() + 5);
+    clearstatcache();
+    assert_contains('$56.78', Support::response('GET', [], ['members_file' => $members], $config)->body);
+}
+
+function test_control_characters_in_a_name_do_not_break_the_picture(): void
+{
+    $now = gmdate('Y-m');
+    $ledger = Support::ledger(['months' => [$now => ['given_cents' => 100, 'costs' => [["Domain\x00 \x1b[2Jname\x7f\u{85}", 87]],
+        'thanks' => "A\x01friend"]]], [], time());
+    $svg = Support::card($ledger, 'dark');
+    assert_same(0, preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]|\xC2[\x80-\x9F]/', $svg), 'no control character is printed');
+    assert_contains('Domain', $svg);
+    $doc = new \DOMDocument();
+    assert_true(@$doc->loadXML($svg), 'the picture is well-formed XML');
+}

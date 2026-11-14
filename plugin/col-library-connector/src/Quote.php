@@ -27,6 +27,10 @@ final class QuoteResult
     public const REWORDED = 'reworded';
     public const OTHER_AUTHOR = 'other_author';
     public const NOT_FOUND = 'not_found';
+    /** Every word matches, but one or more only as a likely misreading of a scan (a letter differs). */
+    public const SCAN_LETTERS = 'scan_letters';
+    /** Every word is there in order, but a piece between "..." marks is only a word or two. */
+    public const LEFT_OUT = 'left_out';
 
     /**
      * @param list<array> $matches qualifying matches, one per work, earliest first (see Quote::match())
@@ -45,6 +49,14 @@ final class QuoteResult
         public readonly array $notes,
     ) {
     }
+
+    /** The same result without the text around the primary match's words, and with one more note. */
+    public function withoutContext(string $note): self
+    {
+        $strip = static fn (?array $m): ?array => $m === null ? null : array_merge($m, ['before' => '', 'after' => '']);
+        return new self($this->quote, $this->author, $this->verdict, $strip($this->primary), $this->matches,
+            $strip($this->earliest), $this->authorWorks, $this->phraseWorks, array_merge($this->notes, [$note]));
+    }
 }
 
 final class Quote
@@ -58,6 +70,8 @@ final class Quote
     public const REWORDED_EDITS = 0.45;
     /** Quotations shorter than this many words must match with at most one edit. */
     public const SHORT_WORDS = 8;
+    /** A piece of a quotation between "..." marks shorter than this is not a phrase: see QuoteResult::LEFT_OUT. */
+    public const PIECE_WORDS = 3;
     /** Works holding the whole phrase: above this, the wording is common (a Bible verse or proverb). */
     public const COMMON_WORKS = 25;
 
@@ -284,7 +298,7 @@ final class Quote
             $verdict = QuoteResult::NOT_FOUND;
         } elseif ($authorKeys === []) {
             $primary = $earliest;
-            $verdict = $primary['edits'] === 0 ? QuoteResult::EXACT : QuoteResult::REWORDED;
+            $verdict = self::verdict($primary);
         } else {
             $his = array_values(array_filter($matches, static fn (array $m): bool => self::byAuthor($m['work'], $authorKeys)));
             if ($his === []) {
@@ -293,7 +307,7 @@ final class Quote
             } else {
                 usort($his, static fn (array $a, array $b): int => [$a['edits'], $a['when']] <=> [$b['edits'], $b['when']]);
                 $primary = $his[0];
-                $verdict = $primary['edits'] === 0 ? QuoteResult::EXACT : QuoteResult::REWORDED;
+                $verdict = self::verdict($primary);
                 // His book has the words, but credits them to someone else (a compilation).
                 if ($primary['credit'] !== null && !self::byAuthor(['author' => $primary['credit'], 'author_slug' => ''], $authorKeys)) {
                     $verdict = QuoteResult::OTHER_AUTHOR;
@@ -305,6 +319,22 @@ final class Quote
         }
         return new QuoteResult($quote, $author, $verdict, $primary, $matches, $earliest, $authorWorks, $phraseWorks,
             $notes);
+    }
+
+    /**
+     * The verdict for a match by the right author. "Word for word" is said only when every word given is
+     * there as given: not when a word was passed as a scan's misreading (the reader must check the scan),
+     * and not when "..." joined pieces of a word or two (that proves the words occur, not the wording).
+     */
+    public static function verdict(array $m): string
+    {
+        if ($m['edits'] !== 0) {
+            return QuoteResult::REWORDED;
+        }
+        if (($m['misread'] ?? 0) > 0) {
+            return QuoteResult::SCAN_LETTERS;
+        }
+        return ($m['thin_pieces'] ?? false) ? QuoteResult::LEFT_OUT : QuoteResult::EXACT;
     }
 
     // ------------------------------------------------------------------------------- tokens
@@ -658,14 +688,52 @@ final class Quote
             return $r;
         }
         $words = $this->words;
+        $pairs = [];
         foreach ($r['ops'] as $op) {
             if ($op[0] === '~' && self::misread($words[$q['ids'][$op[1]]], $words[$doc['tokens'][$op[2]]['id']])) {
+                $pairs[] = [$words[$q['ids'][$op[1]]], $words[$doc['tokens'][$op[2]]['id']]];
+            }
+        }
+        // "not" for "now", "god" for "good", "sin" for "son": both are ordinary words, so the wording differs;
+        // a misreading leaves a non-word ("liis", "tbe").
+        $real = $this->realWords(array_merge(...($pairs === [] ? [[]] : $pairs)));
+        foreach ($pairs as [$given, $found]) {
+            if (!(isset($real[$given]) && isset($real[$found]))) {
                 $r['misread']++;
             }
         }
         $r['edits'] -= $r['misread'];
         $r['same'] += $r['misread'];
         return $r;
+    }
+
+    /** @var array<string,bool> */
+    private array $realCache = [];
+
+    /**
+     * Which of these words are ordinary words: very common ones, and headwords of the library's dictionaries.
+     * @param list<string> $words  @return array<string,true>
+     */
+    private function realWords(array $words): array
+    {
+        $ask = array_values(array_filter(array_unique($words), fn (string $w): bool => !isset($this->realCache[$w])));
+        if ($ask !== []) {
+            try {
+                $found = $this->store->headwords($ask);
+            } catch (\PDOException $e) {
+                $found = [];
+            }
+            foreach ($ask as $w) {
+                $this->realCache[$w] = Text::isStopword($w) || isset($found[$w]);
+            }
+        }
+        $out = [];
+        foreach ($words as $w) {
+            if ($this->realCache[$w]) {
+                $out[$w] = true;
+            }
+        }
+        return $out;
     }
 
     /**
@@ -764,6 +832,8 @@ final class Quote
             'page_end' => $last['page'],
             'edits' => $r['edits'],
             'misread' => $r['misread'] ?? 0,
+            'thin_pieces' => count($q['segments']) > 1
+                && min(array_map('count', $q['segments'])) < self::PIECE_WORDS,
             'same' => $r['same'],
             'words' => count($q['ids']),
             'text' => $words,
