@@ -83,7 +83,7 @@ final class Tools
         $search = [
             'name' => 'search_library',
             'title' => 'Search the Christian Open Library',
-            'description' => 'Search the Christian Open Library: about 4,800 public-domain works, mostly Christian, from the '
+            'description' => 'Search the Christian Open Library: about 6,400 public-domain works, mostly Christian, from the '
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
         . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
         . 'confessions, the historic records of more than 80 denominations (constitutions, books of order and discipline, digests, and General Assembly, convention and conference minutes, before 1931), verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '

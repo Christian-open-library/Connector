@@ -30,6 +30,7 @@ if ! flock -n 9; then
     exit 0
 fi
 
+# MAX_DOLLARS=N deploy/update.sh raises the embedding spend cap for one hand-started run (cron keeps the default).
 # cron starts with a minimal environment. No prompts: git and ssh must fail rather than wait.
 export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 export GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=30'
@@ -40,7 +41,7 @@ echo "=== $(stamp) update started" >>"$LOG"
 nice_cmd=(nice -n 10)
 if command -v ionice >/dev/null 2>&1; then nice_cmd+=(ionice -c 2 -n 7); fi
 "${nice_cmd[@]}" timeout --kill-after=5m "$TIME_LIMIT" \
-    "$PROJECT/.venv/bin/python" -u -m indexer.pipeline nightly >>"$LOG" 2>&1 </dev/null
+    "$PROJECT/.venv/bin/python" -u -m indexer.pipeline nightly ${MAX_DOLLARS:+--max-dollars "$MAX_DOLLARS"} >>"$LOG" 2>&1 </dev/null
 status=$?
 minutes=$(( ($(date +%s) - started + 59) / 60 ))
 if [ "$status" = 124 ]; then
