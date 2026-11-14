@@ -1,7 +1,8 @@
 {
   "_about": "Running costs shown on the public cost card (deploy/funding.py). Amounts in US cents. Searches and new books are metered, so they are not listed here.",
   "start": "2026-11",
-  "planned_use": {
+  "_planned_use_off": {
+    "_off": "Off since 2026-11-14 (Matt: do real usage for now). The card expects real use only; rename this key back to planned_use to plan for more people again.",
     "people": "hundreds of people",
     "rerank_tokens_per_day": 40000000,
     "_note": "Hundreds of people a day would reach the search AI's daily limit (max_voyage_tokens_per_day, 40M since 2026-11-12), about $2 a day once the free tokens are gone; the coming months plan for that. Measured 12 Nov: up to 18 people and 9.4M tokens a day."

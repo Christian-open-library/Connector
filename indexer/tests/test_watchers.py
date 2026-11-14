@@ -7,12 +7,15 @@ import importlib.util
 import io
 import json
 import os
+import random
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -224,7 +227,7 @@ class OfficeErrors(unittest.TestCase):
 
 @unittest.skipUnless(PRIVATE, 'publishing is done from the private repository')
 class PublicCopy(unittest.TestCase):
-    """deploy/publish_public.py's secret scan (finding 20)."""
+    """deploy/publish_public.py's secret scan and licensed-text guard (finding 20)."""
 
     def setUp(self):
         self.pub = load('deploy/publish_public.py', 'publish_under_test')
@@ -239,6 +242,20 @@ class PublicCopy(unittest.TestCase):
         for name, text in files.items():
             (self.conf / name).write_text(text)
         self.files = files
+        # A fake licensed shelf: one work in two parts, made-up words (nothing here is licensed text).
+        self.shelf = Path(tempfile.mkdtemp()) / 'licensed'
+        rng = random.Random(20261114)
+        vocab = ('synod classis consistory overture delegate article report committee federation ministry elder '
+                 'deacon assembly churches agenda motion adopt declare advise mandate study approve receive').split()
+        self.words = [rng.choice(vocab) for _ in range(400)]
+        sentences = [' '.join(self.words[i:i + 16]).capitalize() + '.' for i in range(0, 400, 16)]
+        work = self.shelf / 'Body' / 'Acts of Synod'
+        work.mkdir(parents=True)
+        self.licensed_md = ('---\ntitle: Acts of Synod Somewhere\nlicense: used by permission\n---\n\n'
+                            + '\n\n'.join(' '.join(sentences[i:i + 5]) for i in range(0, 25, 5)) + '\n')
+        (work / 'Body - Acts of Synod Somewhere (2024).md').write_text(self.licensed_md)
+        (work / 'Body - Acts of Synod Somewhere (2024) \u2014 Part 001.md').write_text(self.licensed_md.upper())
+        (self.shelf / 'README.md').write_text('# The licensed shelf\n')
 
     def test_every_file_in_the_config_folder_is_read(self):
         vals = self.pub.secret_values(self.conf)
@@ -250,9 +267,78 @@ class PublicCopy(unittest.TestCase):
         self.assertNotIn('https://api.voyageai.com/v1', vals, 'a plain web address is not a secret')
         self.assertFalse({'bot:9', 'A friend', 'bot'} & set(vals), 'short values and names are left alone')
 
-    def scan(self, text):
-        with mock.patch.object(self.pub, 'CONF', self.conf):
-            return self.pub.scan({'indexer/x.py': (text.encode(), 0o644)})
+    def scan(self, text, name='indexer/x.py', more=None):
+        files = {name: (text.encode() if isinstance(text, str) else text, 0o644), **(more or {})}
+        with mock.patch.object(self.pub, 'CONF', self.conf), mock.patch.object(self.pub, 'LICENSED', self.shelf):
+            return self.pub.scan(files)
+
+    def test_a_copied_licensed_file_is_refused(self):
+        same = self.scan(self.licensed_md, 'tests/php/fixture/notes.md')
+        self.assertEqual(same, ['tests/php/fixture/notes.md: is a file of the licensed shelf '
+                                '(Body/Acts of Synod/Body - Acts of Synod Somewhere (2024).md)'])
+        named = self.scan('anything\n', 'indexer/Body - Acts of Synod Somewhere (2024).md')
+        self.assertIn('is a file of the licensed shelf', named[0])
+        edited = self.scan('# my notes\n' + self.licensed_md.replace('Synod', 'synod'), 'tests/php/x.md')
+        self.assertEqual(len(edited), 1)
+        self.assertIn('words in a row of licensed text', edited[0])
+
+    def test_a_pasted_paragraph_is_refused_and_not_printed(self):
+        run = self.words[123:123 + 30]              # 30 words from the middle, re-wrapped, re-cased, punctuated
+        pasted = '<?php\n$x = "' + ', '.join(run[:12]).title() + ';\n   ' + ' '.join(run[12:]) + '!";\n'
+        problems = self.scan(pasted, 'tests/php/quote_test.php')
+        self.assertEqual(len(problems), 1)      # (named from the main file or its part: both hold these words)
+        self.assertTrue(problems[0].startswith('tests/php/quote_test.php:2: 20+ words in a row of licensed text '
+                                               '(Body/Acts of Synod/Body - Acts of Synod Somewhere (2024)'), problems)
+        self.assertNotIn(' '.join(run[:5]), ' '.join(problems).lower())
+
+    def test_ordinary_public_text_passes(self):
+        self.assertEqual(self.scan('"""In the beginning God created the heaven and the earth. And the earth was '
+                                   'without form, and void; and darkness was upon the face of the deep."""\n'
+                                   'NOTE = "' + ' '.join(self.words[40:55]) + '"\n'), [],
+                         'public text, and a stock phrase of 15 words from the shelf, are fine')
+
+    def test_the_name_of_a_licensed_work_is_refused(self):
+        line = 'licensed/Body/Acts of Synod/Body - Acts of Synod Somewhere (2024).md\turl-with-data\tpassage\t3\twhy\n'
+        self.assertEqual(self.scan('# allow\n' + line, 'indexer/injection-allow.tsv'),
+                         ['indexer/injection-allow.tsv:2: names a licensed work '
+                          '(Body/Acts of Synod/Body - Acts of Synod Somewhere (2024).md)'])
+
+    def test_bible_text_the_licensed_shelf_quotes_is_not_refused(self):
+        verse = ' '.join(self.words[200:240])        # the shelf "quotes" this; a published Bible table holds it too
+        db_path = Path(tempfile.mkdtemp()) / 'library.sqlite'
+        db = sqlite3.connect(db_path)
+        db.execute('CREATE TABLE bible(translation TEXT, book INTEGER, chapter INTEGER, verse INTEGER, text TEXT)')
+        db.execute("INSERT INTO bible VALUES ('kjv', 1, 1, 1, ?)", (verse,))
+        db.commit()
+        db.close()
+        fixture = {'tests/php/fixture/library.sqlite': (db_path.read_bytes(), 0o644)}
+        self.assertEqual(self.scan(f'q = "{verse}"\n', more=fixture), [])
+        self.assertIn('words in a row of licensed text',
+                      ' '.join(self.scan(f'q = "{" ".join(self.words[300:340])}"\n', more=fixture)),
+                      'other licensed text still is')
+
+    def test_licensed_text_compressed_inside_a_database_is_refused(self):
+        db_path = Path(tempfile.mkdtemp()) / 'library.sqlite'
+        db = sqlite3.connect(db_path)
+        db.execute('CREATE TABLE passages(id INTEGER PRIMARY KEY, text BLOB)')
+        db.execute('INSERT INTO passages(text) VALUES (?)', (zlib.compress(' '.join(self.words[60:100]).encode()),))
+        db.commit()
+        db.close()
+        self.assertEqual(self.scan(db_path.read_bytes(), 'tests/php/fixture/library.sqlite'),
+                         ['tests/php/fixture/library.sqlite: table passages: 20+ words in a row of licensed text '
+                          '(Body/Acts of Synod/Body - Acts of Synod Somewhere (2024) \u2014 Part 001.md)'])
+
+    def test_without_the_licensed_shelf_nothing_is_published(self):
+        for shelf in (self.shelf.parent / 'missing', Path(tempfile.mkdtemp())):
+            with mock.patch.object(self.pub, 'CONF', self.conf), mock.patch.object(self.pub, 'LICENSED', shelf):
+                problems = self.pub.scan({'indexer/x.py': (b'print("hello")\n', 0o644)})
+            self.assertEqual(len(problems), 1)
+            self.assertIn(f'licensed shelf not found at {shelf}', problems[0])
+
+    def test_the_private_allow_file_is_never_published(self):
+        name = 'indexer/injection-allow-licensed.tsv'
+        self.assertTrue(any(d.search(name) for d in self.pub.DENY), 'left out of the copy')
+        self.assertIn(f'{name}: private file, never published', self.scan('# none\n', name))
 
     def test_a_secret_from_any_of_them_stops_publishing_and_is_not_printed(self):
         for name in ('github-invite.token', 'x-bearer', 'x-ntfy-topic', 'a-file-added-next-year', 'links.json'):

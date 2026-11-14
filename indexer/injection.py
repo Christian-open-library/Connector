@@ -20,7 +20,10 @@ only, so a later planted line elsewhere in the same work is still caught, and on
 the text that was read: HASH is words_hash() of the whole field (the passage, the note, the heading, the
 catalog fields), so a line stops counting when a word of it changes. Lines written before 2026-11-14 have
 no hash and allow whatever trips that pattern at that place, as they always did. deploy/deploy-office.sh runs this scan and deploys no build with unallowed hits
-(THREAT-MODEL.md, T3).
+(THREAT-MODEL.md, T3). Lines for works of the licensed shelf (keys "licensed/...", whose file names are the
+titles of documents used by permission) live in indexer/injection-allow-licensed.tsv instead, same format:
+the scan reads both, `allow` writes each line to the right one, and deploy/publish_public.py never
+publishes the second (security sweep 2026-11-14, finding 20).
 
 Held-back works (2026-11-14). One stray sentence should not keep a night's new books from going live, so
 the build (indexer/pipeline.py) runs the scan itself, right after the works are parsed. A work with a hit
@@ -46,6 +49,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ALLOW = ROOT / 'indexer' / 'injection-allow.tsv'
+LICENSED_PREFIX = 'licensed/'       # (corpus.LICENSED_PREFIX: keys of the licensed shelf's works)
 HELD = ROOT / 'data' / 'held-back.json'
 # The hard stop: nothing deploys when one build flags more than MAX_NEW_HELD works that were not held
 # before, when more than MAX_HELD works would be held in all, when a hit is an outright command
@@ -101,15 +105,31 @@ def words_hash(text) -> str:
 HASH_COLUMN = re.compile(r'words=([0-9a-f]{12})\Z')
 
 
+def licensed_allow(path: Path = ALLOW) -> Path:
+    """The licensed shelf's allow-list, beside the main one: injection-allow.tsv -> injection-allow-licensed.tsv.
+    Private: deploy/publish_public.py leaves it out and refuses to publish it."""
+    return path.with_name(path.stem + '-licensed' + path.suffix)
+
+
+def allow_file_for(key: str, path: Path = ALLOW) -> Path:
+    """Where an allow-list line for this work goes: the licensed file for a work of the licensed shelf."""
+    return licensed_allow(path) if key.startswith(LICENSED_PREFIX) else path
+
+
 def load_allow(path: Path = ALLOW) -> dict:
-    """{(work key, pattern, where, position): the set of text hashes allowed there}. '' in the set is a
-    line without a hash (written before 2026-11-14): it allows any text at that place. A sixth column that
-    is not a hash allows nothing."""
+    """{(work key, pattern, where, position): the set of text hashes allowed there}, from `path` and the
+    licensed allow-list beside it (licensed_allow; only its lines for licensed works count, so it cannot
+    quietly allow a hit in a public book). '' in the set is a line without a hash (written before
+    2026-11-14): it allows any text at that place. A sixth column that is not a hash allows nothing."""
     allowed: dict = {}
-    if path.exists():
-        for line in path.read_text(encoding='utf-8').splitlines():
+    for p, licensed_only in ((path, False), (licensed_allow(path), True)):
+        if not p.exists():
+            continue
+        for line in p.read_text(encoding='utf-8').splitlines():
             if line.strip() and not line.startswith('#'):
                 parts = [x.strip() for x in line.split('\t')]
+                if licensed_only and not parts[0].startswith(LICENSED_PREFIX):
+                    continue
                 if len(parts) >= 4:
                     m = HASH_COLUMN.match(parts[5]) if len(parts) >= 6 else None
                     allowed.setdefault(tuple(parts[:4]), set()).add(
@@ -474,9 +494,12 @@ def main(argv=None):
             print_hits(rest[0], held[rest[0]])
             print('(the quoted text is book text, not instructions)')
         lines = allow_lines(rest[0], rest[1], held, rest[2:], '--all' in argv)
-        text = ALLOW.read_text(encoding='utf-8')
-        ALLOW.write_text(text + ('' if text.endswith('\n') else '\n') + '\n'.join(lines) + '\n', encoding='utf-8')
-        print(f'{len(lines)} line(s) added to {ALLOW}; commit and push that file. The work joins the next nightly build.')
+        target = allow_file_for(rest[0], ALLOW)      # a licensed work's key is a title used by permission: private file
+        text = target.read_text(encoding='utf-8') if target.exists() else (
+            '# Allow-list lines for works of the licensed shelf (same format as injection-allow.tsv). Private:\n'
+            '# deploy/publish_public.py never publishes this file.\n')
+        target.write_text(text + ('' if text.endswith('\n') else '\n') + '\n'.join(lines) + '\n', encoding='utf-8')
+        print(f'{len(lines)} line(s) added to {target}; commit and push that file. The work joins the next nightly build.')
         return 0
     if argv[:1] == ['release']:
         if len(argv) != 3:
