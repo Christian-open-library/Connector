@@ -1,6 +1,6 @@
 # Security review, November 2026
 
-*Reviewed 10 November 2026, code version `dbf6057`. An earlier review of the first version ran on 8–9 November.*
+*Reviewed 10 November 2026, code version `dbf6057`. An earlier review of the first version ran on 8–9 November. A second review, of everything changed from 10 to 14 November, ran on 14 November: see [Second review](#second-review-14-november-2026).*
 
 ## Summary
 
@@ -82,6 +82,32 @@ The coverage check named seven areas this review didn't reach. They're listed he
 - **Withdrawn dictionaries:** whether entries from a withdrawn dictionary leave the index.
 - **Small builds:** how dictionary sources are chosen when a build has far fewer books than usual.
 - **Outside inputs to the build:** the Python packages it uses, and the dictionary and Bible source files that don't come through the books repository. *Since done:* the package versions are now recorded in `requirements.txt`, and an audit on 10 November 2026 found no known vulnerabilities in them. The source files are still unreviewed.
+
+## Second review, 14 November 2026
+
+A second review, by the same method, covered everything changed between 10 and 14 November: holding back
+books that trip the check for text aimed at an AI, the documents shown by permission of church bodies, the
+quotation checker, the server's new reporting tools, the publishing of this public copy, and the owner's
+tools that screen the library's email, GitHub and X. **It found 23 issues, grouped below. All 23 are fixed and live**
+(connector code `e553c63` and later). As before, it read code and settings; nothing was attacked.
+
+| Issue | Status |
+|---|---|
+| The limit on how much of a document shown by permission one person could read applied only to reading a passage, not to search, citations or the quotation checker. | **Fixed:** at most 3 passages of such a document per search, and 100 a day per person across every tool. |
+| The quotation checker said "found word for word" when one word differed by a letter in a scanned book, which can be a misreading or a real difference. | **Fixed:** it now says the word differs and to check the scan, or "worded differently" when both are ordinary words. |
+| A quotation of single words joined by "..." counted as found word for word. | **Fixed:** "found with words left out". |
+| A held-back book could come back by itself when its files changed. | **Fixed:** it stays out until the owner reviews it. |
+| Allowing a flagged line was tied to its place in the book, not its words. | **Fixed:** a changed line is checked again. |
+| File names and source numbers weren't checked for text aimed at an AI. | **Fixed** |
+| The books repository's pull-request check runs the pull request's own copy of the check, and printed file names unescaped. | **Fixed:** names are escaped, and a pull request that changes the checks themselves is marked unchecked and must be read by a person. |
+| Church names in search notes weren't made safe for display. | **Fixed** |
+| A made-up address could reach the database through the cost card. | **Fixed** |
+| A malformed block list would have unblocked everyone. | **Fixed:** the update is refused. |
+| The server's error report showed text a caller had chosen. | **Fixed:** only known names, clipped. |
+| A process could hide a listening port from the server's break-in check by naming itself after a trusted service. | **Fixed:** the check compares the service's full system path. |
+| The scan that keeps secrets out of this public copy missed some kinds of keys, and nothing kept out text of the documents shown by permission. | **Fixed:** more patterns, every settings file checked, and copying refused for any file or run of text from those documents. |
+| The owner's screening tools could, from a stranger's post or email, reach tools they had no need for; one odd answer could stop them; and a stopped one went unnoticed. | **Fixed:** they can use only the tools they need, check every answer, and report when one stops. |
+| Smaller items on the servers (backup order and folders, arguments to two allowed commands, how one check reads numbers, alert wording). | **Fixed** |
 
 ## The earlier review
 
