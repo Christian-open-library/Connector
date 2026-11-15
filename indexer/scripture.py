@@ -121,14 +121,21 @@ def roman_to_int(s: str) -> int | None:
 
 _alias_re = '|'.join(re.escape(a) for a in sorted(_alias_to_id, key=len, reverse=True))
 REF_RE = re.compile(
-    r'(?<![A-Za-z])'
-    r'(?:(?P<ord>[123]|I{1,3}|i{1,3}|First|Second|Third|1st|2nd|3rd|1\.|2\.|3\.)\s*\.?\s*)?'
+    # a digit ordinal may follow a footnote letter ("g2 Kings", "fi2 Chron."); other ordinals, and a
+    # book without one, may not follow a letter
+    r'(?:(?P<ord>[123](?:st|nd|rd|\.)?|(?<!\d)4(?:th|\.)?|(?<![A-Za-z])(?:IV|I{1,3}|First|Second|Third|Fourth))'
+    r'\s*\.?\s*|(?<![A-Za-z]))'
     r'(?P<book>' + _alias_re + r')(?![a-z])\.?\s*'
     r'(?P<ch>\d{1,3}|[ivxlcIVXLC]{1,7})(?![\d])'
     r'(?:\s*(?:\.,|[\.:,])\s*(?P<v1>\d{1,3})(?:\s*(?:[-–—]|to)\s*(?P<v2>\d{1,3}))?)?'
     r'(?![\d])', re.I)
 ORD_MAP = {'1': 0, 'i': 0, 'first': 0, '1st': 0, '1.': 0, '2': 1, 'ii': 1, 'second': 1, '2nd': 1, '2.': 1,
-           '3': 2, 'iii': 2, 'third': 2, '3rd': 2, '3.': 2}
+           '3': 2, 'iii': 2, 'third': 2, '3rd': 2, '3.': 2, '4': 3, 'iv': 3, 'fourth': 3, '4th': 3, '4.': 3}
+# Latin/Douay numbering: "3 Kings", "4 Kings", "III Reg.", "IV Reg." are 1-2 Kings; "3 Esdras",
+# "4 Esdras" are 1-2 Esdras. ("1 Reg."/"2 Reg." stay 1-2 Kings: writers use them both ways.) Any other
+# ordinal past a book's last (an OCR "3 Chron." for "2 Chron.", "IV Macc.") is skipped, not read as
+# the first book: the counts are a lower bound.
+FOURFOLD = {11: (None, None, 11, 12), 79: (None, None, 79, 80)}
 ONE_CHAPTER = {31, 57, 63, 64, 65}     # Obadiah, Philemon, 2 John, 3 John, Jude: "Jude 3" is verse 3
 RANGE_AFTER_RE = re.compile(r'\s*(?:[-–—]|to)\s*(\d{1,3})(?![\d])')
 # more verses of the same chapter: "1 Tim. 6. 17, 18, 19", "Heb. 12:22,23" (not "28, 9. 5": a chapter)
@@ -189,7 +196,10 @@ def extract_refs(text: str, limits: dict | None = None) -> list[tuple[int, int, 
     ("Rom. i. 32; ii. 1") and a lone number in a one-chapter book ("Jude 3", "Philem. 10")."""
     out = []
     text = text.replace('ſ', 's').replace('ẜ', 's')   # re.I folds long s to s; normalize first
+    consumed = 0                       # end of the text the references so far have taken
     for m in REF_RE.finditer(text):
+        prev_end = consumed
+        consumed = max(consumed, m.end())
         raw = m.group('book')
         if not raw[0].isupper():
             continue
@@ -198,6 +208,13 @@ def extract_refs(text: str, limits: dict | None = None) -> list[tuple[int, int, 
         if bid is None:
             continue
         ordinal = m.group('ord')
+        if ordinal and (m.start() < prev_end                          # a verse of the reference
+                        or ((bid not in ORDINAL or bid == 43) and m.start() and text[m.start() - 1].isalpha())
+                        or (ORD_MAP.get(ordinal.lower().rstrip('.')) == 3 and bid not in (11, 77, 79))):
+            # before ("Rom. 8. 3, 4 Gal. 5. 1"), a footnote mark ("i3 Ps."; "i3 John iii. 2" is footnote
+            # 13, so John takes no glued ordinal), or a 4 that can only be a
+            # stray number ("Mt 5:4 Joh 14:16")
+            ordinal = None
         if bid in ORDINAL:
             idx = ORD_MAP.get((ordinal or '1').lower().rstrip('.') if ordinal else '1', None)
             if ordinal and ordinal.lower() in ORD_MAP:
@@ -205,18 +222,14 @@ def extract_refs(text: str, limits: dict | None = None) -> list[tuple[int, int, 
             if idx is None:
                 continue
             ids = ORDINAL[bid]
-            if bid == 43:              # John vs 1-3 John
-                if not ordinal:
-                    bid = 43
-                elif idx < len(ids):
-                    bid = ids[idx]
-                else:
-                    continue
+            if bid == 43 and not ordinal:   # John vs 1-3 John
+                bid = 43
+            elif idx < len(ids):
+                bid = ids[idx]         # no ordinal: "Cor. 5. 7" is taken as the first epistle
+            elif bid in FOURFOLD and FOURFOLD[bid][idx]:
+                bid = FOURFOLD[bid][idx]
             else:
-                if not ordinal and bid not in (9, 11, 13):
-                    # "Cor. 5. 7" without ordinal is ambiguous; assume the first epistle
-                    pass
-                bid = ids[idx] if idx < len(ids) else ids[0]
+                continue
         elif ordinal and ordinal.lower().rstrip('.') in ('2', '3', 'ii', 'iii', 'second', 'third', '2nd', '3rd'):
             # "2 Kings" style ordinals on a non-ordinal alias: probably not a reference
             continue
@@ -260,6 +273,7 @@ def extract_refs(text: str, limits: dict | None = None) -> list[tuple[int, int, 
                 break
             v1, v2, pos = int(c.group(2)), int(c.group(3)) if c.group(3) else None, c.end()
             first = [(v1, v2)]
+        consumed = max(consumed, pos)
     return out
 
 

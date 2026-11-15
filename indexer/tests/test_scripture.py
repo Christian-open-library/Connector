@@ -14,6 +14,48 @@ LIMITS = {45: {1: 32, 2: 29, 8: 39, 9: 33, 10: 21}, 54: {6: 21}, 58: {12: 29}, 4
 
 
 class ExtractRefs(unittest.TestCase):
+    # the next three from .github issue #97 (fidpa)
+    def test_an_ordinal_beyond_the_books_is_not_read_as_the_first_book(self):
+        # "3 Chron." is an OCR slip for "2 Chron.": there is no third Chronicles, so it must not
+        # count as a citation of 1 Chronicles
+        self.assertEqual(refs('3 Chron. vii. 7-33 with 1 Kings viii. 64'), ['1 Kings 8:64'])
+        self.assertEqual(refs('3 Cor. 5. 7'), [])
+        self.assertEqual(refs('3 Tim. 2. 4'), [])
+        self.assertEqual(refs('3 John 4'), ['3 John 1:4'], 'a real third book still counts')
+
+    def test_a_number_before_the_book_that_is_not_an_ordinal_does_not_mean_the_first_book(self):
+        self.assertNotIn('1 Kings 15:19', refs('g2 Kings XV. 19'))
+        self.assertNotIn('1 Kings 2:11', refs('4 Kings 2:11'))
+        self.assertNotIn('1 Kings 2:11', refs('IV Reg. 2. 11'))
+        self.assertEqual(refs('Cor. 5. 7'), ['1 Corinthians 5:7'], 'no ordinal at all: first epistle, as before')
+
+    def test_the_verse_of_the_reference_before_is_not_a_book_number(self):
+        self.assertEqual(refs('Luke 24. 49. John 14. 16'), ['Luke 24:49', 'John 14:16'])
+        self.assertEqual(refs('Isa. 37. 36. Kings 19. 35'), ['Isaiah 37:36', '1 Kings 19:35'])
+        self.assertEqual(refs('John v. 1 Kings 2. 11'), ['John 5:1', '1 Kings 2:11'])
+
+    def test_latin_and_douay_numbering(self):
+        self.assertEqual(refs('1 Reg. 15. 22'), ['1 Kings 15:22'], 'used both ways; left as it was')
+        self.assertEqual(refs('III Reg. 19. 12'), ['1 Kings 19:12'])
+        self.assertEqual(refs('IV Reg. 2. 11'), ['2 Kings 2:11'])
+        self.assertEqual(refs('3 Kings 19. 12'), ['1 Kings 19:12'])
+        self.assertEqual(refs('4 Kings 2:11'), ['2 Kings 2:11'])
+        self.assertEqual(refs('4 Esdras 7. 28'), ['2 Esdras 7:28'])
+        self.assertEqual(refs('IV Mac 16:9'), [], 'no 4 Maccabees in the library')
+        self.assertEqual(refs('Mt 5:4 Joh 14:16'), ['John 14:16'])
+        self.assertEqual(refs('2 Kings 2:11'), ['2 Kings 2:11'])
+        self.assertEqual(refs('4 Gen. 3. 5'), ['Genesis 3:5'], 'as before: only 2 and 3 rule out a book without ordinals')
+        self.assertEqual(refs('Rom. 8. 3, 4 Gal. 5. 1'), ['Romans 8:3-4', 'Galatians 5:1'])
+        self.assertEqual(refs('Rom. 8. 28, 1 Cor. 2. 9'), ['Romans 8:28', '1 Corinthians 2:9'])
+
+    def test_a_footnote_letter_before_an_ordinal(self):
+        self.assertEqual(refs('g2 Kings XV. 19; xvi, 7'), ['2 Kings 15:19', '2 Kings 16:7'])
+        self.assertEqual(refs('fi2  Chron.  7  :  14.'), ['2 Chronicles 7:14'])
+        self.assertEqual(refs('m1 Cor. Xi, 23.'), ['1 Corinthians 11:23'])
+        self.assertEqual(refs('Psalm 23. 1. a4 Kings 2. 11'), ['Psalms 23:1', '2 Kings 2:11'])
+        self.assertEqual(refs('i3 Ps. xxxix. 5. i2 Luke xviii. 14.'), ['Psalms 39:5', 'Luke 18:14'])
+        self.assertEqual(refs('i3 John iii. 2; vii. 50'), ['John 3:2', 'John 7:50'])
+
     def test_one_chapter_books_take_a_lone_number_as_the_verse(self):
         self.assertEqual(refs('as in Jude 6, the angels', LIMITS), ['Jude 1:6'])
         self.assertEqual(refs('Jude 3-5', LIMITS), ['Jude 1:3-5'])
