@@ -81,6 +81,19 @@ final class Quote
     private const PHRASE_IDS = 200;        // passages holding the whole quotation, read at most
     private const WINDOW_IDS = 30;
     private const VECTOR_IDS = 40;
+    private const PIECE_MAX = 6;           // short exact pieces of the quotation, searched in pairs
+    private const PAIR_IDS = 40;           // a pair of pieces in more passages than this tells nothing (dropped)
+    private const PAIR_CANDS = 60;         // passages kept from the pairs (most pairs first)
+    private const PAIR_SECONDS = 1.5;      // no new pair is searched after this long on the pairs
+    /**
+     * Words in about 30% or more of the library's passages (counted 2026-11-15, build 20261115-041757; "s" is
+     * from "God's"):
+     * a phrase holding one is slow to look up, so the pieces leave them out.
+     */
+    private const HEAVY = ['the', 'of', 'and', 'in', 'to', 'a', 'that', 'is', 'its', 'it', 'being', 'be', 'as', 'for',
+        'not', 'with', 'but', 'by', 'this', 'on', 'which', 'his', 'he', 'all', 'having', 'have', 'from', 'are', 'or',
+        'was', 'they', 'so', 'i', 'at', 'we', 'theirs', 'their', 'them', 'him', 'an', 'us', 'no', 'who', 'there', 'if',
+        'has', 'were', 'when', 'may', 'other', 'one', 'god', 's', 'will'];
     private const ALIGN_MAX = 120;         // candidates aligned (passages holding the whole phrase come first)
     private const EDGE_RETRIES = 10;       // best candidates aligned again with a neighbouring passage
     private const MIN_COVER = 0.34;        // share of the quotation's distinct words a candidate must hold
@@ -161,6 +174,14 @@ final class Quote
         }
         $cands += $phraseIds;
         $this->trace['phrase_ms'] = (int) round((microtime(true) - $t0) * 1000);
+        // Not there word for word: passages holding two short pieces of it close together (a reworded
+        // quotation of common words keeps some of its little phrases, though it may lose a key word).
+        if ($phraseIds === []) {
+            $pairHits = $this->pairHits($q['segments'], $q['gaps'] === [] ? $n + 10 : 3 * $n + 10);
+            $cands += array_fill_keys($pairHits, true);
+            $this->trace['pair_hits'] = count($pairHits);
+            $this->trace['pair_ms'] = (int) round((microtime(true) - $t0) * 1000);
+        }
         // Runs of three content words close together: a drifted quotation keeps some of them.
         $windowHits = [];
         foreach ($this->windows($q['segments']) as [$words, $span]) {
@@ -484,6 +505,128 @@ final class Quote
             $this->log?->error('quote_near_failed', ['error' => Text::logMessage($e)]);
         }
         return array_values(array_unique(array_map('intval', $hits)));
+    }
+
+    /**
+     * Passages holding two pieces of the quotation (Quote::pieces) within $span words of each other, those
+     * holding the most pairs first. Two single words, or two pieces that overlap, are not a pair. A pair found
+     * in more than PAIR_IDS passages is common wording and is dropped; its query stops there, in id order,
+     * so a common pair costs little. After PAIR_SECONDS the rest are left (the other searches still run).
+     * @param list<list<string>> $segments  @return list<int>
+     */
+    private function pairHits(array $segments, int $span): array
+    {
+        $pieces = self::pieces($segments);
+        $count = [];
+        $start = microtime(true);
+        $this->trace['pairs'] = 0;
+        foreach ($pieces as $i => [$a, $at]) {
+            foreach (array_slice($pieces, $i + 1) as [$b, $bt]) {
+                if ((count($a) === 1 && count($b) === 1) || $at + count($a) > $bt) {
+                    continue;
+                }
+                if ($this->remaining() < self::MIN_SECONDS) {
+                    break 2;
+                }
+                if (microtime(true) - $start > self::PAIR_SECONDS) {
+                    $this->trace['pairs_left'] = true;
+                    break 2;
+                }
+                $this->trace['pairs']++;
+                try {
+                    $ids = $this->store->matchInOrder(self::nearPhrases([$a, $b], $span), null, self::PAIR_IDS + 1, 0);
+                } catch (\PDOException $e) {
+                    $this->log?->error('quote_pair_failed', ['error' => Text::logMessage($e)]);
+                    continue;
+                }
+                if (count($ids) <= self::PAIR_IDS) {
+                    foreach ($ids as $id) {
+                        $count[$id] = ($count[$id] ?? 0) + 1;
+                    }
+                }
+            }
+        }
+        arsort($count);
+        return array_slice(array_map('intval', array_keys($count)), 0, self::PAIR_CANDS);
+    }
+
+    /**
+     * Short exact pieces of a quotation for pairHits, each with its position: every three words in a row
+     * (or the whole run, if shorter) of its runs of words without the commonest ones (HEAVY), when one of
+     * them is not a stopword. At most PIECE_MAX: pieces of two or three words before single words, spread
+     * over the quotation, in its order.
+     * @param list<list<string>> $segments  @return list<array{0: list<string>, 1: int}>
+     */
+    public static function pieces(array $segments): array
+    {
+        static $heavy = null;
+        $heavy ??= array_fill_keys(self::HEAVY, true);
+        $all = [];
+        $seen = [];
+        $pos = 0;
+        foreach ($segments as $seg) {
+            $runs = [];
+            $run = [];
+            foreach ($seg as $w) {
+                if (isset($heavy[$w])) {
+                    $runs[] = $run;
+                    $run = [];
+                } else {
+                    $run[] = [$w, $pos];
+                }
+                $pos++;
+            }
+            $runs[] = $run;
+            $pos += 100;   // a gap: pieces either side never overlap
+            foreach ($runs as $run) {
+                for ($k = 0; $k === 0 || $k + 3 <= count($run); $k++) {
+                    $piece = array_slice($run, $k, 3);
+                    $words = array_column($piece, 0);
+                    $key = implode(' ', $words);
+                    if ($piece !== [] && !isset($seen[$key])
+                        && array_filter($words, static fn (string $w): bool => !Text::isStopword($w)) !== []) {
+                        $seen[$key] = true;
+                        $all[] = [$words, $piece[0][1]];
+                    }
+                }
+            }
+        }
+        if (count($all) <= self::PIECE_MAX) {
+            return $all;
+        }
+        $long = array_keys(array_filter($all, static fn (array $p): bool => count($p[0]) > 1));
+        $single = array_keys(array_filter($all, static fn (array $p): bool => count($p[0]) === 1));
+        $keep = self::spread(array_values($long), self::PIECE_MAX);
+        $keep = array_merge($keep, self::spread(array_values($single), self::PIECE_MAX - count($keep)));
+        sort($keep);
+        return array_map(static fn (int $k): array => $all[$k], $keep);
+    }
+
+    /** At most $max of the items, evenly spread. @param list<int> $items @return list<int> */
+    private static function spread(array $items, int $max): array
+    {
+        if (count($items) <= $max) {
+            return $items;
+        }
+        if ($max <= 0) {
+            return [];
+        }
+        if ($max === 1) {
+            return [$items[0]];
+        }
+        $out = [];
+        $step = (count($items) - 1) / ($max - 1);
+        for ($k = 0; $k < $max; $k++) {
+            $out[] = $items[(int) round($k * $step)];
+        }
+        return $out;
+    }
+
+    /** FTS5 query: these phrases within $span tokens of each other in the body. @param list<list<string>> $phrases */
+    public static function nearPhrases(array $phrases, int $span): string
+    {
+        return 'body : NEAR(' . implode(' ', array_map(static fn (array $p): string => Text::quote(implode(' ', $p)),
+            $phrases)) . ', ' . $span . ')';
     }
 
     /** FTS5 query: these words within $span tokens of each other in the body. @param list<string> $words */

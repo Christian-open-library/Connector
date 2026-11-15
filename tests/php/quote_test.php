@@ -337,3 +337,62 @@ function test_single_words_joined_by_gaps_are_not_word_for_word(): void
     assert_same(\ColLibrary\QuoteResult::REWORDED, Quote::verdict(['edits' => 1, 'misread' => 1]));
     assert_same(\ColLibrary\QuoteResult::EXACT, Quote::verdict(['edits' => 0, 'misread' => 0, 'thin_pieces' => false]));
 }
+
+function test_pieces_leave_out_the_commonest_words(): void
+{
+    // Wesley's "Do all the good you can ...": "the" and "all" are in most passages, so they are left out;
+    // "do" alone is only a stopword, so it is no piece.
+    $wesley = ['do', 'all', 'the', 'good', 'you', 'can', 'by', 'all', 'the', 'means', 'you', 'can', 'in', 'all', 'the',
+               'ways', 'you', 'can'];
+    assert_same([[['good', 'you', 'can'], 3], [['means', 'you', 'can'], 9], [['ways', 'you', 'can'], 15]],
+        Quote::pieces([$wesley]));
+    // A run longer than three words gives every three in a row, so "many good books" is kept whole.
+    assert_same([[['visit', 'many', 'good'], 0], [['many', 'good', 'books'], 1], [['live'], 5], [['bible'], 8]],
+        Quote::pieces([['visit', 'many', 'good', 'books', 'but', 'live', 'in', 'the', 'bible']]));
+    // "...": pieces either side never overlap
+    $gap = Quote::pieces([['killing', 'sin'], ['slaying', 'you']]);
+    assert_same([], Quote::pieces([['one', 'god', 'will', 'the']]), 'the commonest ordinary words too');
+    assert_same(['killing sin', 'slaying you'], array_map(static fn (array $p): string => implode(' ', $p[0]), $gap));
+    assert_true($gap[1][1] >= $gap[0][1] + 2);
+    assert_same([], Quote::pieces([['to', 'be', 'or', 'not', 'to', 'be']]), 'only stopwords: no pieces');
+}
+
+function test_pieces_at_most_six_longer_first(): void
+{
+    $long = explode(' ', 'grace reigns through righteousness unto eternal life and mercy endures for ever and truth '
+        . 'abides in the soul of the saint and love never fails');
+    $p = Quote::pieces([$long]);
+    assert_same(6, count($p));
+    assert_same([], array_filter($p, static fn (array $x): bool => count($x[0]) === 1), 'two- and three-word pieces first');
+    $at = array_column($p, 1);
+    $sorted = $at;
+    sort($sorted);
+    assert_same($sorted, $at, 'in the quotation\'s order');
+    assert_same(0, $at[0], 'spread from the start...');
+    assert_true(end($at) >= 18, '...to the end');
+}
+
+function test_near_phrases_query_runs_on_the_index(): void
+{
+    $store = \ColLibraryTest\Fixture\store_or_skip();
+    $q = Quote::nearPhrases([['killing', 'sin'], ['will']], 19);
+    assert_same('body : NEAR("killing sin" "will", 19)', $q);
+    assert_same([10100003, 10200000], $store->matchInOrder($q, null, 41, 0), 'both editions of Owen');
+    assert_same([], $store->matchInOrder(Quote::nearPhrases([['killing', 'sin'], ['restless']], 19), null, 41, 0));
+}
+
+function test_a_reworded_quotation_of_common_words_is_found_through_its_pieces(): void
+{
+    // "them" for "you": not there word for word; the pair of pieces ("killing sin" near "killing") finds it.
+    $store = \ColLibraryTest\Fixture\store_or_skip();
+    $check = new Quote($store, \ColLibraryTest\Fixture\fake_voyage($store), microtime(true) + 25);
+    $r = $check->check('be killing sin, or it will be killing them', 'John Owen');
+    assert_same(0, $check->trace['phrase_hits']);
+    assert_true(($check->trace['pair_hits'] ?? 0) >= 2, 'the pairs found both editions');
+    assert_same(\ColLibrary\QuoteResult::REWORDED, $r->verdict);
+    assert_same(101, $r->primary['work']['id']);
+    // Found word for word: the pairs are not searched.
+    $exact = new Quote($store, \ColLibraryTest\Fixture\fake_voyage($store), microtime(true) + 25);
+    $exact->check('be killing sin or it will be killing you', 'John Owen');
+    assert_false(isset($exact->trace['pair_hits']));
+}
