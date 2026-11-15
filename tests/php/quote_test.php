@@ -396,3 +396,15 @@ function test_a_reworded_quotation_of_common_words_is_found_through_its_pieces()
     $exact->check('be killing sin or it will be killing you', 'John Owen');
     assert_false(isset($exact->trace['pair_hits']));
 }
+
+function test_windows_list_their_passages_without_ranking(): void
+{
+    // Runs of content words ("killing sin will", "sin will killing") are looked up in id order, not ranked by
+    // bm25 (which makes SQLite count each word over the whole library): both editions of Owen come back.
+    $store = \ColLibraryTest\Fixture\store_or_skip();
+    $check = new Quote($store, \ColLibraryTest\Fixture\fake_voyage($store), microtime(true) + 25);
+    $r = $check->check('be killing sin, or it will be killing them', null);
+    assert_true(($check->trace['window_hits'] ?? 0) >= 2, 'the windows found both editions');
+    assert_false(isset($check->trace['windows_common']), 'no window is common wording in the fixture');
+    assert_same(\ColLibrary\QuoteResult::REWORDED, $r->verdict);
+}

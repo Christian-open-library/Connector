@@ -76,11 +76,12 @@ final class Quote
     public const COMMON_WORKS = 25;
 
     private const NEAR_WORDS = 8;          // distinct content words in the NEAR query
-    private const NEAR_IDS = 40;
+    private const NEAR_SCAN = 100;         // a NEAR of all the words in more passages than this tells nothing
     private const WINDOW_MAX = 12;         // runs searched
     private const PHRASE_IDS = 200;        // passages holding the whole quotation, read at most
-    private const WINDOW_IDS = 30;
-    private const VECTOR_IDS = 40;
+    private const WINDOW_SCAN = 300;       // a window in more passages than this is common wording (dropped)
+    private const WINDOW_CANDS = 150;      // passages kept from the windows (most windows first)
+    private const VECTOR_IDS = 60;         // 40 -> 60 on 2026-11-15: +1 of 300 in the recall test (it was 52nd), ~+0.2 s in php-wasm
     private const PIECE_MAX = 6;           // short exact pieces of the quotation, searched in pairs
     private const PAIR_IDS = 40;           // a pair of pieces in more passages than this tells nothing (dropped)
     private const PAIR_CANDS = 60;         // passages kept from the pairs (most pairs first)
@@ -183,22 +184,9 @@ final class Quote
             $this->trace['pair_ms'] = (int) round((microtime(true) - $t0) * 1000);
         }
         // Runs of three content words close together: a drifted quotation keeps some of them.
-        $windowHits = [];
-        foreach ($this->windows($q['segments']) as [$words, $span]) {
-            if ($this->remaining() < self::MIN_SECONDS) {
-                break;
-            }
-            try {
-                foreach (array_keys($this->store->keywordSearch(self::near($words, $span), null, self::WINDOW_IDS)) as $id) {
-                    $windowHits[$id] = ($windowHits[$id] ?? 0) + 1;
-                }
-            } catch (\PDOException $e) {
-                $this->log?->error('quote_window_failed', ['error' => Text::logMessage($e)]);
-            }
-        }
-        arsort($windowHits);
+        $windowHits = $this->windowHits($q['segments']);
         $this->trace['window_ms'] = (int) round((microtime(true) - $t0) * 1000);
-        $cands += array_fill_keys(array_keys($windowHits), true);
+        $cands += array_fill_keys($windowHits, true);
         if ($this->remaining() > self::MIN_SECONDS) {
             $cands += array_fill_keys($this->nearHits($q['segments'], count($cands) < 5), true);
         }
@@ -476,7 +464,8 @@ final class Quote
 
     /**
      * Passages holding the quotation's distinct content words close together, and when $relax, the
-     * same without one word at a time (longest words first).
+     * same without one word at a time (longest words first). Listed in id order, not ranked (see windowHits);
+     * a query in more than NEAR_SCAN passages is common wording and adds nothing.
      * @param list<list<string>> $segments  @return list<int>
      */
     private function nearHits(array $segments, bool $relax): array
@@ -489,16 +478,19 @@ final class Quote
             return [];
         }
         $span = count($all) + 10;
+        $find = function (array $words) use ($span): array {
+            $ids = $this->store->matchInOrder(self::near($words, $span), null, self::NEAR_SCAN + 1, 0);
+            return count($ids) > self::NEAR_SCAN ? [] : $ids;
+        };
         $hits = [];
         try {
-            $hits = array_keys($this->store->keywordSearch(self::near($words, $span), null, self::NEAR_IDS));
+            $hits = $find($words);
             if ($relax && count($hits) < 5 && count($words) >= 4) {
                 foreach (array_slice($words, 0, 3) as $drop) {
                     if ($this->remaining() < self::MIN_SECONDS) {
                         break;
                     }
-                    $rest = array_values(array_diff($words, [$drop]));
-                    $hits = array_merge($hits, array_keys($this->store->keywordSearch(self::near($rest, $span), null, self::NEAR_IDS)));
+                    $hits = array_merge($hits, $find(array_values(array_diff($words, [$drop]))));
                 }
             }
         } catch (\PDOException $e) {
@@ -633,6 +625,40 @@ final class Quote
     public static function near(array $words, int $span): string
     {
         return 'body : NEAR(' . implode(' ', array_map([Text::class, 'quote'], $words)) . ', ' . $span . ')';
+    }
+
+    /**
+     * Passages holding runs of the quotation's content words close together (Quote::windows), those holding the
+     * most windows first (then those found by the rarer windows). Each window's passages are listed in id order,
+     * not ranked: ranking by bm25 makes SQLite count every word of the window over the whole library, 0.5-1.2 s
+     * a window natively for common words such as "god's" (Hudson Taylor's "God's work done in God's way",
+     * 2026-11-15). A window in more than WINDOW_SCAN passages is common wording and is dropped.
+     * @param list<list<string>> $segments  @return list<int>
+     */
+    private function windowHits(array $segments): array
+    {
+        $score = [];
+        foreach ($this->windows($segments) as [$words, $span]) {
+            if ($this->remaining() < self::MIN_SECONDS) {
+                break;
+            }
+            try {
+                $ids = $this->store->matchInOrder(self::near($words, $span), null, self::WINDOW_SCAN + 1, 0);
+            } catch (\PDOException $e) {
+                $this->log?->error('quote_window_failed', ['error' => Text::logMessage($e)]);
+                continue;
+            }
+            if (count($ids) > self::WINDOW_SCAN) {
+                $this->trace['windows_common'] = ($this->trace['windows_common'] ?? 0) + 1;
+                continue;
+            }
+            foreach ($ids as $id) {
+                $score[$id] = ($score[$id] ?? 0.0) + 1.0 + 1.0 / count($ids);
+            }
+        }
+        arsort($score);
+        $this->trace['window_hits'] = count($score);
+        return array_slice(array_map('intval', array_keys($score)), 0, self::WINDOW_CANDS);
     }
 
     /**
