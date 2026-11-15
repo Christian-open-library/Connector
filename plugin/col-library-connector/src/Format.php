@@ -469,6 +469,16 @@ final class Format
             $lines[] = "FOUND, BUT BY SOMEONE ELSE: the words are in $where, but there $who is quoting $credit: a credit "
                 . "line, \"— $credit\", follows them. Tell the user the words are $credit's as quoted by $who"
                 . ($p['edits'] > 0 || $p['misread'] > 0 ? ' (worded a little differently; see below)' : '') . '.';
+        } elseif ($r->verdict === QuoteResult::OTHER_AUTHOR && !empty($p['named'])) {
+            $lines[] = "FOUND ONLY AS QUOTED: the earliest work in the library with these words is $where"
+                . ($p['edits'] > 0 || $p['misread'] > 0 ? ' (worded a little differently; see below)' : '')
+                . ", and there the writer names $who just before or after them, so he gives them as $who's. "
+                . ($r->authorWorks > 0
+                    ? 'None of the library\'s ' . self::plural($r->authorWorks, 'work') . " by $who has them (it holds only "
+                        . 'some of this author\'s writings, editions and translations, so this does not show the words are not theirs).'
+                    : "The library has no works by $who.");
+            $lines[] = 'Tell the user the library has these words only as ' . self::field((string) $p['work']['author'], 80)
+                . " quotes them, crediting $who; read the sentences before them, and do not say $who did not write them.";
         } elseif ($r->verdict === QuoteResult::OTHER_AUTHOR) {
             $lines[] = "FOUND, BUT NOT BY $who: the earliest work in the library with these words is $where"
                 . ($p['edits'] > 0 || $p['misread'] > 0 ? ' (worded a little differently; see below)' : '') . '. '
@@ -503,6 +513,15 @@ final class Format
             $lines[] = 'EARLIER SOURCE: ' . ($e['edits'] === 0 && $e['misread'] === 0 ? 'the same words are' : 'similar words are')
                 . ' in an earlier work, ' . self::quoteWhere($e) . '. '
                 . ($who !== null ? "$who may have been quoting or echoing it; say so." : 'The later writer may have been quoting it.');
+        }
+        if ($r->verdict === QuoteResult::OTHER_AUTHOR && empty($p['named'])) {
+            foreach ($r->matches as $m) {
+                if (!empty($m['named']) && $m['work']['id'] !== $p['work']['id']) {
+                    $lines[] = "CREDITED THERE TO $who: " . self::quoteWhere($m) . " names $who next to these words. Say that "
+                        . 'this later writer credits them so, and that the earlier work above does not.';
+                    break;
+                }
+            }
         }
         if ($r->phraseWorks > Quote::COMMON_WORKS) {
             array_unshift($lines, 'COMMON WORDING: ' . number_format($r->phraseWorks) . ' or more works in the library use these exact '

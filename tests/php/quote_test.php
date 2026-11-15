@@ -408,3 +408,79 @@ function test_windows_list_their_passages_without_ranking(): void
     assert_false(isset($check->trace['windows_common']), 'no window is common wording in the fixture');
     assert_same(\ColLibrary\QuoteResult::REWORDED, $r->verdict);
 }
+
+function test_longer_and_place_names_match_the_library_author(): void
+{
+    $works = [['author' => 'Charles Spurgeon', 'author_slug' => 'charles-spurgeon'], ['author' => 'Augustine', 'author_slug' => 'augustine'],
+              ['author' => 'Francis of Assisi', 'author_slug' => 'francis-of-assisi']];
+    assert_same(['charles', 'spurgeon'], Quote::authorKeysFor('Charles Haddon Spurgeon', $works), 'middle name dropped');
+    assert_same(['spurgeon'], Quote::authorKeysFor('C. H. Spurgeon', $works));
+    assert_same(['augustine'], Quote::authorKeysFor('Augustine of Hippo', $works), 'the place dropped');
+    assert_same(['augustine'], Quote::authorKeysFor('St. Augustine', $works));
+    assert_same(['francis', 'assisi'], Quote::authorKeysFor('Francis of Assisi', $works), 'kept when the library has it so');
+    assert_same(['john', 'haddon', 'owen'], Quote::authorKeysFor('John Haddon Owen', $works), 'no shorter form matches either');
+    assert_same(['thomas', 'brooks'], Quote::authorKeysFor('Thomas Brooks', $works));
+
+    $text = ok(['quote' => 'be killing sin or it will be killing you', 'author' => 'Dr. John Haddon Owen']);
+    assert_contains('FOUND WORD FOR WORD', $text, 'John Owen in the library');
+    $text = ok(['quote' => 'Thou hast made us for Thyself, and our heart is restless', 'author' => 'Augustine of Hippo']);
+    assert_not_contains('NOT BY', $text);
+}
+
+function test_initials_tell_two_writers_of_one_surname_apart(): void
+{
+    $moody = ['author' => 'D. L. Moody', 'author_slug' => 'd-l-moody'];
+    $son = ['author' => 'Paul D. Moody and Arthur P. Fitt', 'author_slug' => ''];
+    $keys = Quote::authorKeysFor('D.L. Moody', [$son, $moody]);
+    assert_same(['d', 'l', 'moody'], $keys);
+    assert_true(Quote::byAuthor($moody, $keys));
+    assert_false(Quote::byAuthor($son, $keys), "his son's book is not his");
+    assert_same(['spurgeon'], Quote::authorKeysFor('C.H. Spurgeon', [['author' => 'Charles Spurgeon', 'author_slug' => '']]),
+        'initials dropped when no author in the library has them');
+}
+
+function test_a_writer_who_names_the_credited_author_is_quoting_him(): void
+{
+    $keys = ['richard', 'baxter'];
+    assert_true(Quote::namesAuthor(['before' => 'his aim must be to serve the church. Well says Baxter, "', 'after' => ''], $keys));
+    assert_true(Quote::namesAuthor(['before' => 'and *Luther* had rather', 'after' => ''], ['martin', 'luther']));
+    assert_true(Quote::namesAuthor(['before' => '', 'after' => ' (Luther\'s Table Talk.)'], ['martin', 'luther']));
+    assert_false(Quote::namesAuthor(['before' => 'the Baxterians say', 'after' => ''], $keys), 'a whole word only');
+    assert_false(Quote::namesAuthor(['before' => 'Well says Owen, "', 'after' => ''], $keys));
+
+    $r = call(['quote' => 'be killing sin or it will be killing you', 'author' => 'Augustine']);
+    assert_contains('FOUND, BUT NOT BY Augustine', \ColLibraryTest\Fixture\text_of($r));
+    $store = \ColLibraryTest\Fixture\store_or_skip();
+    $res = (new Quote($store, \ColLibraryTest\Fixture\fake_voyage($store), microtime(true) + 20))
+        ->check('be killing sin or it will be killing you', 'Augustine');
+    $named = new \ColLibrary\QuoteResult($res->quote, $res->author, $res->verdict, array_merge($res->primary, ['named' => true]),
+        $res->matches, $res->earliest, $res->authorWorks, $res->phraseWorks, $res->notes);
+    $text = \ColLibrary\Format::quoteCheck($named);
+    assert_contains('FOUND ONLY AS QUOTED: the earliest work in the library with these words is John Owen', $text);
+    assert_contains('there the writer names Augustine just before or after them', $text);
+    assert_contains('do not say Augustine did not write them', $text);
+    assert_not_contains('NOT BY Augustine', $text);
+}
+
+function test_a_rewording_keeps_the_quotation_whole(): void
+{
+    $words = static fn (string $s): array => explode(' ', $s);
+    $check = static function (string $quote, string $lib) use ($words): bool {
+        $q = $words($quote);
+        $p = $words($lib);
+        $ids = array_flip(array_values(array_unique(array_merge($q, $p))));
+        $r = Quote::align(array_map(fn ($w) => $ids[$w], $q), [], array_map(fn ($w) => $ids[$w], $p));
+        return Quote::keepsWhole($r, $q, fn (int $j): string => $p[$j]);
+    };
+    assert_true($check('thou hast made us for thyself and our hearts are restless until they rest in thee',
+        'thou hast made us for thyself and our heart is restless until it repose in thee'));
+    assert_true($check('we must remember that satan has his miracles too',
+        'and it becomes us to remember that satan has his miracles which although'), 'two words at an end');
+    assert_false($check('lord i know that i am not worthy but i will keep trying',
+        'o lord i know that i am not worthy that thou shouldest enter'), 'a stock phrase: the last five words missing');
+    assert_false($check('missions is not the ultimate goal of the church',
+        'is as has been well said the ultimate consequential goal of the church and'), 'the first three missing');
+    assert_false($check('you ve got to get people lost before you can get them saved',
+        'now you have got to get water before you can get it out'), 'only small words kept');
+    assert_true($check('the bible is the cradle wherein christ is laid', 'the bible is the cradle wherein christ is laid'));
+}

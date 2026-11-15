@@ -68,6 +68,18 @@ final class Quote
     public const REWORDED_SAME = 0.6;
     /** ...and at most this many edits per word of the quotation. */
     public const REWORDED_EDITS = 0.45;
+    /**
+     * ...and at least this share of its content words (not stopwords), so that a passage sharing only small words
+     * ("you have got to get ... before you can get") is not taken for a rewording.
+     */
+    public const REWORDED_CONTENT = 0.5;
+    /**
+     * ...and no run of this many words or more at either end of the quotation missing from the passage, when that
+     * run is a quarter of the quotation or more: the passage then holds a stock phrase from it ("Lord, I know that I
+     * am not worthy"), not the quotation. Added 2026-11-15 after the real-world set (tests/recall/realworld.json).
+     */
+    public const END_GAP_WORDS = 3;
+    public const END_GAP_SHARE = 0.25;
     /** Quotations shorter than this many words must match with at most one edit. */
     public const SHORT_WORDS = 8;
     /** A piece of a quotation between "..." marks shorter than this is not a phrase: see QuoteResult::LEFT_OUT. */
@@ -147,7 +159,7 @@ final class Quote
                 . ' words). Give its most distinctive sentence or two.');
         }
         $notes = [];
-        $authorKeys = $author !== null ? self::authorWords($author) : [];
+        $authorKeys = $author !== null ? self::authorKeysFor($author, $this->store->allWorks()) : [];
         $authorWorks = 0;
         if ($authorKeys !== []) {
             foreach ($this->store->allWorks() as $w) {
@@ -285,7 +297,7 @@ final class Quote
         $byWork = [];
         foreach ($results as $id => $r) {
             $r = $this->allowMisreads($r, $q, $docs[$id]);
-            if (!$this->qualifies($r, $n)) {
+            if (!$this->qualifies($r, $n, $q, $docs[$id])) {
                 continue;
             }
             $m = $this->match($q, $docs[$id], $r, $quote);
@@ -300,6 +312,11 @@ final class Quote
         $phraseWorks = count(array_unique(array_map(static fn (int $id): int => $passages[$id]['work_id'],
             array_filter(array_keys($phraseIds), static fn (int $id): bool => isset($passages[$id])))));
 
+        if ($authorKeys !== []) {
+            foreach ($matches as $k => $m) {
+                $matches[$k]['named'] = self::namesAuthor($m, $authorKeys);
+            }
+        }
         $exact = array_values(array_filter($matches, static fn (array $m): bool => $m['edits'] === 0));
         $earliest = $exact[0] ?? $matches[0] ?? null;
         $primary = null;
@@ -931,7 +948,7 @@ final class Quote
     }
 
     /** Close enough to call it the same quotation. */
-    private function qualifies(array $r, int $n): bool
+    private function qualifies(array $r, int $n, array $q, array $doc): bool
     {
         if ($r['edits'] === 0) {
             return true;
@@ -939,7 +956,44 @@ final class Quote
         if ($n < self::SHORT_WORDS) {
             return $r['edits'] <= 1 && $r['same'] >= $n - 1;
         }
-        return $r['same'] >= self::REWORDED_SAME * $n && $r['edits'] <= self::REWORDED_EDITS * $n;
+        return $r['same'] >= self::REWORDED_SAME * $n && $r['edits'] <= self::REWORDED_EDITS * $n
+            && self::keepsWhole($r, array_map(fn (int $id): string => $this->words[$id], $q['ids']),
+                fn (int $j): string => $this->words[$doc['tokens'][$j]['id']]);
+    }
+
+    /**
+     * Whether an alignment keeps the quotation whole enough to be a rewording of it: half its content words (not
+     * stopwords) kept, and no long run of it unmatched at either end (REWORDED_CONTENT, END_GAP_WORDS). A word
+     * passed as a scan's misreading counts as kept.
+     * @param list<string> $quoteWords the quotation's words, in order  @param callable(int):string $libWord
+     */
+    public static function keepsWhole(array $r, array $quoteWords, callable $libWord): bool
+    {
+        $n = count($quoteWords);
+        $kept = [];
+        foreach ($r['ops'] as $op) {
+            if ($op[0] === '=' || ($op[0] === '~' && $op[2] !== null && self::misread($quoteWords[$op[1]], $libWord($op[2])))) {
+                $kept[$op[1]] = true;
+            }
+        }
+        if ($kept === []) {
+            return false;
+        }
+        $gap = max(min(array_keys($kept)), $n - 1 - max(array_keys($kept)));
+        if ($gap >= self::END_GAP_WORDS && $gap >= self::END_GAP_SHARE * $n) {
+            return false;
+        }
+        $content = [];
+        $hit = [];
+        foreach ($quoteWords as $i => $w) {
+            if (mb_strlen($w) > 1 && !Text::isStopword($w)) {
+                $content[$w] = true;
+                if (isset($kept[$i])) {
+                    $hit[$w] = true;
+                }
+            }
+        }
+        return count($content) < 2 || count($hit) >= self::REWORDED_CONTENT * count($content);
     }
 
     // ------------------------------------------------------------------------------ matches
@@ -1316,6 +1370,71 @@ final class Quote
         $long = array_values(array_filter($words, static fn (string $w): bool => strlen($w) >= 3
             && !in_array($w, ['rev', 'the', 'saint', 'st', 'mr', 'dr', 'bishop', 'pastor'], true)));
         return $long !== [] ? $long : $words;
+    }
+
+    /**
+     * The credited name's words to match against the library's authors: all its long words, with its initials when
+     * it has any ("D. L. Moody", so that Paul D. Moody's book is not taken for D. L. Moody's); failing a work by
+     * those, first and last word ("Robert Murray McCheyne"), the name before "of" ("Augustine of Hippo"), "Mc"
+     * for "M'" ("M'Cheyne"), and the long words alone ("C. H. Spurgeon" for the library's "Charles Spurgeon").
+     * @param iterable<array> $works  @return list<string>
+     */
+    public static function authorKeysFor(string $author, iterable $works): array
+    {
+        $all = self::authorWords($author);
+        $tries = [];
+        $initials = array_values(array_filter(explode(' ', Text::looseKey($author)),
+            static fn (string $w): bool => strlen($w) === 1));
+        if ($initials !== [] && $all !== [] && array_diff($all, $initials) === $all) {
+            $tries[] = array_merge($initials, $all);
+        }
+        $tries[] = $all;
+        if (count($all) >= 3) {
+            $tries[] = [$all[0], $all[count($all) - 1]];
+        }
+        if (preg_match('/^(.+?) of \S/', Text::looseKey($author), $m) === 1) {
+            $before = self::authorWords($m[1]);
+            if ($before !== [] && $before !== $all) {
+                $tries[] = $before;
+            }
+        }
+        // "M'Cheyne" is the same name as "McCheyne" (the older way of printing it).
+        $mc = (string) preg_replace("/\\bM['’‘]\\s?(?=\\p{Lu})/u", 'Mc', $author);
+        if ($mc !== $author) {
+            $words = self::authorWords($mc);
+            $tries[] = $words;
+            if (count($words) >= 3) {
+                $tries[] = [$words[0], $words[count($words) - 1]];
+            }
+        }
+        if (count($tries) === 1 || $all === []) {
+            return $all;
+        }
+        $works = is_array($works) ? $works : iterator_to_array($works, false);
+        foreach ($tries as $keys) {
+            foreach ($works as $w) {
+                if (self::byAuthor($w, $keys)) {
+                    return $keys;
+                }
+            }
+        }
+        return $all;
+    }
+
+    /**
+     * Whether the writer of a match names the credited author in the sentences just before the words or just
+     * after them ("Well says Baxter, ...", "Luther had rather be ..."): then he is giving them as that author's.
+     * @param list<string> $keys from authorKeysFor
+     */
+    public static function namesAuthor(array $m, array $keys): bool
+    {
+        $long = array_values(array_filter($keys, static fn (string $k): bool => strlen($k) >= 3));
+        if ($long === []) {
+            return false;
+        }
+        $name = $long[count($long) - 1];
+        $around = Text::looseKey(mb_substr((string) $m['before'], -400) . ' ' . mb_substr((string) $m['after'], 0, 200));
+        return preg_match('/(?:^| )' . preg_quote($name, '/') . 's?(?: |$)/', $around) === 1;
     }
 
     /** True when every credited name word is a word of the work's author. @param list<string> $keys */
