@@ -42,7 +42,14 @@ PY
 
 case "${1:-}" in
   release)
-    git diff --quiet HEAD -- plugin/col-library-connector/src server || { echo "commit first: releases use the last commit" >&2; exit 1; }
+    git diff --quiet HEAD -- plugin/col-library-connector/src server tests/php || { echo "commit first: releases use the last commit" >&2; exit 1; }
+    # No release with a failing test (LIBRARY_PHP: another PHP 8.1+ binary, e.g. php, where tools/php isn't set up).
+    echo "--- $(date +%H:%M:%S) tests"
+    if ! out=$("${LIBRARY_PHP:-tools/php}" tests/php/run.php 2>&1); then
+        printf '%s\n' "$out" | grep -E '^  FAIL|^    at |^  failed: | passed, ' | head -n 40 >&2
+        echo "tests failed: nothing was released" >&2; exit 1
+    fi
+    printf '%s\n' "$out" | tail -n 1
     rev=$(git rev-parse --short=12 HEAD)
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
     git archive HEAD plugin/col-library-connector/src server/www server/oauth.php server/authkit-metadata.json | tar -x -C "$tmp"

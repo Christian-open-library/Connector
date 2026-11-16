@@ -15,7 +15,7 @@ use ColLibrary\Response;
 use ColLibraryTest\Fixture;
 
 require_once __DIR__ . '/fixture/testlib.php';
-col_src('Mcp', 'Bible', 'PublicCheck');
+col_src('Mcp', 'Bible', 'KeptAnswer', 'PublicCheck');
 
 const SITE = 'https://christianopenlibrary.org';
 const TIME = Fixture\FIXED_TIME;
@@ -337,6 +337,16 @@ function test_a_repeat_is_answered_from_the_kept_answer(): void
     touch($f, time() - 25 * 3600);
     (new \ColLibrary\KeptAnswer($config2->stateDir() . '/public-answers', 's', 'w', 86400))->sweep();
     assert_same([], glob($config2->stateDir() . '/public-answers/*') ?: []);
+
+    // An answer kept by one release of the code is not found by the next: a check whose logic changed is run again,
+    // not answered with what the older code said (a word-for-word quotation was shown as reworded for a day).
+    $config3 = cfg(['state_dir' => col_tmpdir('colb')]);
+    $old = PublicCheck::kept($config3, $q['quote'], $q['author'], '1.0.0+aaaaaaaaaaaa');
+    $old->write(['verdict' => 'reworded']);
+    assert_same('reworded', $old->read()['verdict'], 'the older release finds its own answer');
+    assert_same(null, PublicCheck::kept($config3, $q['quote'], $q['author'], '1.0.0+bbbbbbbbbbbb')->read(),
+        'the next release does not');
+    assert_same('exact', data(post($q, [], '198.51.100.8', $config3))['verdict'], 'and the website gets the current answer');
 
     // Off: nothing kept.
     $off = cfg(['public_check_cache_hours' => 0]);
