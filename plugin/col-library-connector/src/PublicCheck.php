@@ -58,6 +58,11 @@ final class PublicCheck
         if (!$config->publicCheck()) {
             return Response::json(404, '{}');
         }
+        // The deploy smoke test (deploy/smoke.py) proves it knows the connector's key and counts as a visitor of its
+        // own, so its checks after each release don't use up the allowance of whoever shares the maintainer's address.
+        if (hash_equals(self::smokeCode($config), (string) ($headers['x-library-smoke'] ?? ''))) {
+            $visitor = self::SMOKE;
+        }
         $log = Log::fromConfig($config)->with(['link' => 'public']);
         $origin = Config::normalizeOrigin((string) ($headers['origin'] ?? ''));
         if ($origin === null || !in_array($origin, $config->publicCheckOrigins(), true)) {
@@ -237,8 +242,20 @@ final class PublicCheck
      * address counts by its /64 network (one connection usually has a whole /64 to choose from). No address (a
      * request that did not come through Cloudflare) counts as one shared visitor.
      */
+    private const SMOKE = 'smoke-test';
+
+    /** What the smoke test sends in X-Library-Smoke: made from the connector's key, so only its holder can send it. */
+    public static function smokeCode(Config $config): string
+    {
+        return hash_hmac('sha256', 'public-check-smoke', $config->urlKey());
+    }
+
     public static function visitorCode(string $visitor, Config $config, int $now): string
     {
+        if ($visitor === self::SMOKE) {
+            $key = hash('sha256', 'public-check-visitor-2|' . $config->urlKey(), true);
+            return substr(hash_hmac('sha256', intdiv($now, 86400) . '|smoke-test', $key), 0, 16);
+        }
         $visitor = trim($visitor);
         $bin = strlen($visitor) <= 64 ? @inet_pton($visitor) : false;
         if ($bin === false) {
@@ -248,7 +265,7 @@ final class PublicCheck
         } else {
             $visitor = inet_ntop($bin);
         }
-        $key = hash('sha256', 'public-check-visitor|' . $config->urlKey(), true);
+        $key = hash('sha256', 'public-check-visitor-2|' . $config->urlKey(), true);
         return substr(hash_hmac('sha256', intdiv($now, 86400) . '|' . strtolower($visitor), $key), 0, 16);
     }
 

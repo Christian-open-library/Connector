@@ -217,6 +217,21 @@ function test_only_the_website_may_call_it(): void
     assert_throws(\ColLibrary\ConfigException::class, fn () => cfg(['public_check' => 'yes']));
 }
 
+function test_the_smoke_test_has_its_own_allowance(): void
+{
+    $config = cfg(['public_check_visitor_per_minute' => 100, 'public_check_visitor_per_day' => 2,
+        'public_check_cache_hours' => 0]);
+    $q = ['quote' => 'be killing sin or it will'];
+    $smoke = ['X-Library-Smoke' => PublicCheck::smokeCode($config)];
+    assert_same(200, post($q, $smoke, '198.51.100.9', $config)->status);
+    assert_same(200, post($q, $smoke, '198.51.100.9', $config)->status);
+    assert_same(429, post($q, $smoke, '198.51.100.9', $config)->status, 'the smoke test has a limit too');
+    assert_same(200, post($q, [], '198.51.100.9', $config)->status, 'the same address is not used up by it');
+    assert_same(200, post($q, ['X-Library-Smoke' => str_repeat('0', 64)], '198.51.100.9', $config)->status,
+        'a wrong code counts as the address');
+    assert_same(429, post($q, [], '198.51.100.9', $config)->status);
+}
+
 function test_limits_per_visitor_and_for_everyone(): void
 {
     $config = cfg(['public_check_visitor_per_minute' => 2, 'public_check_visitor_per_day' => 3,

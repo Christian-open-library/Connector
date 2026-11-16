@@ -10,6 +10,8 @@ public quotation checker (POST /check: an answer for the website's Origin, 403 f
 whose right answer was confirmed against the library by hand, so a release that gets one wrong fails here. Exit 0 if all
 pass.
 """
+import hashlib
+import hmac
 import json
 import re
 import sys
@@ -72,9 +74,14 @@ def public_check(base, origin, body):
     return code, d, acao
 
 
+SMOKE_CODE = ''   # set in main() from the connector's key: the smoke test's own allowance on /check
+
+
 def public_check_once(base, origin, body):
-    req = urllib.request.Request(base + '/check', data=json.dumps(body).encode(), method='POST', headers={
-        'Content-Type': 'text/plain;charset=UTF-8', 'Origin': origin, 'User-Agent': 'col-deploy-smoke/1.0'})
+    headers = {'Content-Type': 'text/plain;charset=UTF-8', 'Origin': origin, 'User-Agent': 'col-deploy-smoke/1.0'}
+    if SMOKE_CODE:
+        headers['X-Library-Smoke'] = SMOKE_CODE
+    req = urllib.request.Request(base + '/check', data=json.dumps(body).encode(), method='POST', headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return r.status, json.loads(r.read().decode()), r.headers.get('Access-Control-Allow-Origin')
@@ -91,6 +98,8 @@ def text(reply):
 
 def main():
     url = open(sys.argv[1]).read().strip()
+    global SMOKE_CODE
+    SMOKE_CODE = hmac.new(url.rsplit('/', 1)[1].encode(), b'public-check-smoke', hashlib.sha256).hexdigest()
     want_rev = sys.argv[2] if len(sys.argv) > 2 else None
     shown = url.rsplit('/', 1)[0] + '/***'
     print(f'smoke test: {shown}')

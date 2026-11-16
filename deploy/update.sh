@@ -2,6 +2,7 @@
 # Nightly update of the Christian Open Library connector (cron; see README, "Nightly updates").
 #
 #   deploy/update.sh
+#   COL_FORCE=1 deploy/update.sh     rebuild even with no new books (a change in the build code alone)
 #
 # Runs `python -m indexer.pipeline nightly`: pull the books repo; if its commit differs from the one
 # in data/deployed.json, rebuild, embed only the new passages (the embedding cache keeps the rest,

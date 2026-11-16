@@ -260,7 +260,9 @@ def nightly(max_dollars: float):
     held, allowed = injection.load_held(), injection.load_allow()
     injection.send_alerts(held)      # (an alert that could not be sent last night)
     released = injection.wants_build(held, allowed)
-    if last.get('repo_commit') == now and last.get('licensed_commit') == now_licensed and not released:
+    # COL_FORCE=1 (deploy/update.sh by hand): rebuild anyway, for a change in the build code alone.
+    force = os.environ.get('COL_FORCE') == '1'
+    if last.get('repo_commit') == now and last.get('licensed_commit') == now_licensed and not released and not force:
         print(f'books repo unchanged at {now[:10]}, licensed shelf at {now_licensed[:10]}; nothing to do')
         return
     # Before building too: a run that stops before the deploy (the injection check, the spend cap)

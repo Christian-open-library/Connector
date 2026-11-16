@@ -50,6 +50,10 @@ Changed 16 November: kept answers are now tied to the code release, so a new rel
 show an answer worked out by older code. A release also stops if any test fails, and after each one the live checker
 is tried on quotations whose right answers are known.
 
+Changed 16 November: the deploy smoke test has an allowance of its own (the same limits as one visitor). It identifies
+itself with a code made from the connector's secret key, which only the maintainer holds; a wrong code counts as an
+ordinary visitor. Before, its checks after each release counted against the maintainer's home address.
+
 ## 14 November 2026: everything changed since 10 November
 
 A second review, by the same method, covered everything changed between 10 and 14 November: holding back
