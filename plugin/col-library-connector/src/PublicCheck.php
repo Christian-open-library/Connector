@@ -311,7 +311,7 @@ final class PublicCheck
      * is not looked for. Without this a verse was credited to the earliest book that quotes it.
      * When no translation has them word for word, the closest verse (bibleNear), marked near with the count of
      * words that match.
-     * @return array{ref:string, translation:string, text:string, more:list<string>, total:int, near:bool, same?:int, words?:int}|null
+     * @return array{ref:string, translation:string, text:string, more:list<string>, total:int, near:bool, left_out?:bool, same?:int, words?:int}|null
      */
     public static function bible(Store $store, string $quote): ?array
     {
@@ -437,9 +437,46 @@ final class PublicCheck
             return null;
         }
         [, $v, $same] = $best;
-        return ['ref' => $name($v['book']) . ' ' . $v['chapter'] . ':' . $v['verse'],
+        $ref = ['ref' => $name($v['book']) . ' ' . $v['chapter'] . ':' . $v['verse'],
             'translation' => self::BIBLE_ORDER[$v['translation']], 'text' => Text::oneLine($v['text'], 2000),
-            'more' => [], 'total' => 1, 'near' => true, 'same' => $same, 'words' => $n];
+            'more' => [], 'total' => 1];
+        // Every word is the verse's, in its order, with some of the verse's words left out between them ("Jesus said,
+        // I am the bread of life" for "Jesus said unto them, I am the bread of life"): the verse, quoted in part.
+        if ($same === $n && self::inPhrases($words, self::bibleWords($v['text']), self::BIBLE_PHRASES)) {
+            return $ref + ['near' => false, 'left_out' => true];
+        }
+        return $ref + ['near' => true, 'same' => $same, 'words' => $n];
+    }
+
+    private const BIBLE_PHRASES = 3;       // phrases of a verse a quotation with words left out may be made of
+
+    /** Whether $words are at most $max phrases of $have, in order, and no more phrases than half the words. */
+    private static function inPhrases(array $words, array $have, int $max): bool
+    {
+        $i = 0;
+        $from = 0;
+        $n = count($words);
+        $h = count($have);
+        for ($parts = 0; $i < $n; $parts++) {
+            $best = 0;
+            $end = 0;
+            for ($s = $from; $s < $h; $s++) {
+                $len = 0;
+                while ($i + $len < $n && $s + $len < $h && $have[$s + $len] === $words[$i + $len]) {
+                    $len++;
+                }
+                if ($len > $best) {
+                    $best = $len;
+                    $end = $s + $len;
+                }
+            }
+            if ($best === 0 || $parts >= min($max, intdiv($n, 2))) {
+                return false;
+            }
+            $i += $best;
+            $from = $end;
+        }
+        return true;
     }
 
     /** Whether $words, less one of them, are one phrase of $have. */

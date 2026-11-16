@@ -114,6 +114,9 @@ function test_bible_verses_are_named_first(): void
     assert_same('John 3:16', $d['bible']['ref'], 'a reworded verse is recognized');
     assert_same(true, $d['bible']['near'], 'and marked as near');
     assert_same([12, 14], [$d['bible']['same'], $d['bible']['words']], '12 of its 14 words are in the verse, in order');
+    $d = data(post(['quote' => 'For God so loved the world, that he gave his Son']));
+    assert_same(['John 3:16', false, true], [$d['bible']['ref'] ?? null, $d['bible']['near'] ?? null, $d['bible']['left_out'] ?? null],
+        'the verse with words left out between is the verse, not a near match');
     $d = data(post(['quote' => 'For God so loved the world, Caesar']));
     assert_same('John 3:16', $d['bible']['ref'] ?? null, 'one stray uncommon word still finds the verse');
     assert_same([6, 7], [$d['bible']['same'], $d['bible']['words']]);
