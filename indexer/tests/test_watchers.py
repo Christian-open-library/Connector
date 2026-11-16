@@ -426,6 +426,8 @@ class PublicCopy(unittest.TestCase):
                            ('https://ntfy' + '.sh/some-topic-1234', 'ntfy topic')):
             self.assertEqual(self.scan(f'x = "{text}"\n'), [f'indexer/x.py:1: {what}'], what)
 
+    @unittest.skipUnless(Path(os.environ.get('COL_LICENSED', '/mnt/photos/library-work/licensed')).is_dir(),
+                         'needs the licensed shelf and the real secret files, which only the homebox has')
     def test_the_tree_has_nothing_that_stops_publishing(self):
         """The scan as publishing runs it, on the files it would publish from this checkout's HEAD, with the
         real secret files. (Before: a placeholder ntfy address in a test stopped every publish.)"""

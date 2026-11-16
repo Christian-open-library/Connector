@@ -31,7 +31,7 @@ DIMS = 512
 PRICE_PER_M = 0.02          # dollars per million tokens for DOC_MODEL
 CHARS_PER_TOKEN = 3.2       # conservative for old spelling
 BATCH_TEXTS = 500
-BATCH_CHARS = 1_200_000     # ~375k tokens, well under the 1M-token request cap
+BATCH_CHARS = 600_000       # Greek and Syriac run ~1.1 chars per token: 1.2M chars broke the 1M-token cap on 2026-11-16
 
 
 def cache_key(model: str, dims: int, text: str) -> str:
