@@ -49,6 +49,7 @@ final class QuoteResult
         public readonly array $notes,
         public readonly array $authorKeys = [],   // the credited name's words matched against authors (Quote::authorKeysFor)
         public readonly bool $incomplete = false,  // a search step was skipped for lack of time: NOT FOUND is not final
+        public readonly ?array $modern = null,     // the credited writer is still in copyright (Modern::find)
     ) {
     }
 
@@ -58,7 +59,7 @@ final class QuoteResult
         $strip = static fn (?array $m): ?array => $m === null ? null : array_merge($m, ['before' => '', 'after' => '']);
         return new self($this->quote, $this->author, $this->verdict, $strip($this->primary), $this->matches,
             $strip($this->earliest), $this->authorWorks, $this->phraseWorks, array_merge($this->notes, [$note]),
-            $this->authorKeys, $this->incomplete);
+            $this->authorKeys, $this->incomplete, $this->modern);
     }
 }
 
@@ -164,7 +165,10 @@ final class Quote
                 . ' words). Give its most distinctive sentence or two.');
         }
         $notes = [];
-        $authorKeys = $author !== null ? self::authorKeysFor($author, $this->store->allWorks()) : [];
+        // A writer still in copyright is matched by name only: "Packer" is not a misspelt "Parker".
+        $modern = $author !== null ? Modern::find($author) : null;
+        $authorKeys = $modern !== null ? Modern::authorKeys($modern['name'])
+            : ($author !== null ? self::authorKeysFor($author, $this->store->allWorks()) : []);
         $authorWorks = 0;
         if ($authorKeys !== []) {
             foreach ($this->store->allWorks() as $w) {
@@ -362,7 +366,7 @@ final class Quote
             $notes[] = 'The check ran short of time, so not every possible passage was compared.';
         }
         return new QuoteResult($quote, $author, $verdict, $primary, $matches, $earliest, $authorWorks, $phraseWorks,
-            $notes, $authorKeys, $this->short);
+            $notes, $authorKeys, $this->short, $modern);
     }
 
     /**

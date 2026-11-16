@@ -295,6 +295,11 @@ final class PublicCheck
             'others_total' => 0,
             'notes' => array_values(array_map(static fn (string $n): string => Text::oneLine($n, 300), $r->notes)),
             'bible' => null,
+            // The writer credited is still in copyright and none of his books in the library has the words: the
+            // page says so instead of a bare "not in the library". works: his books the library has (usually 0).
+            'in_copyright' => $r->modern !== null
+                && ($verdict === QuoteResult::NOT_FOUND || $verdict === QuoteResult::OTHER_AUTHOR)
+                ? ['name' => $r->modern['name'], 'works' => $r->authorWorks] : null,
         ];
         if ($p === null) {
             return $out;

@@ -15,7 +15,7 @@ use ColLibrary\Response;
 use ColLibraryTest\Fixture;
 
 require_once __DIR__ . '/fixture/testlib.php';
-col_src('Mcp', 'Bible', 'KeptAnswer', 'PublicCheck');
+col_src('Mcp', 'Bible', 'KeptAnswer', 'PublicCheck', 'Modern', 'ModernList');
 
 const SITE = 'https://christianopenlibrary.org';
 const TIME = Fixture\FIXED_TIME;
@@ -97,6 +97,12 @@ function test_not_by_the_credited_author_and_not_found(): void
     assert_same('not_found', $none['verdict']);
     assert_same(null, $none['primary']);
     assert_same(2, $none['author_works']);
+    assert_same(null, $none['in_copyright']);
+    $piper = data(post(['quote' => 'The quick brown fox jumps over the lazy dog', 'author' => 'Piper']));
+    assert_same(['name' => 'John Piper', 'works' => 0], $piper['in_copyright']);
+    $lewis = data(post(['quote' => 'be killing sin or it will be killing you', 'author' => 'C.S. Lewis']));
+    assert_same('other_author', $lewis['verdict']);
+    assert_same(['name' => 'C. S. Lewis', 'works' => 0], $lewis['in_copyright']);
 }
 
 function test_bible_verses_are_named_first(): void

@@ -452,7 +452,9 @@ final class Format
         if ($p === null) {
             $lines[] = 'NOT FOUND: no passage in the library has these words or wording close to them. '
                 . self::QUOTE_NOT_FOUND_RULE;
-            if ($who !== null) {
+            if ($r->modern !== null) {
+                $lines[] = self::inCopyright($r);
+            } elseif ($who !== null) {
                 $lines[] = $r->authorWorks > 0
                     ? 'The library has ' . self::plural($r->authorWorks, 'work') . " by $who; it holds only some of this author's writings."
                     : "The library has no works by $who.";
@@ -508,6 +510,9 @@ final class Format
                 . 'words given are there in the same order. The real wording and the one given are shown side by side '
                 . 'below, with the words that differ in bold. Quote the library\'s wording, not the version given.';
         }
+        if ($r->modern !== null && $r->verdict === QuoteResult::OTHER_AUTHOR && $credit === null) {
+            $lines[] = self::inCopyright($r);
+        }
         if ($r->verdict !== QuoteResult::OTHER_AUTHOR && $e !== null && $e['work']['id'] !== $p['work']['id']
             && $e['when'] < $p['when'] && Text::looseKey($e['work']['author']) !== Text::looseKey($p['work']['author'])) {
             $lines[] = 'EARLIER SOURCE: ' . ($e['edits'] === 0 && $e['misread'] === 0 ? 'the same words are' : 'similar words are')
@@ -553,6 +558,18 @@ final class Format
             }
         }
         return mb_strlen($out) > self::MAX_CHARS ? Text::clip($out, self::MAX_CHARS) : $out;
+    }
+
+    /** The line for a quotation credited to a writer still in copyright (Modern) whose books here lack it. */
+    private static function inCopyright(QuoteResult $r): string
+    {
+        $name = $r->modern['name'];
+        return "IN COPYRIGHT: the books of $name" . ($r->modern['died'] !== null ? " (died {$r->modern['died']})" : '')
+            . ' are still in copyright, so the library '
+            . ($r->authorWorks > 0 ? 'holds only ' . self::plural($r->authorWorks, 'work') . ' by ' . $name
+                : 'does not hold them')
+            . ". Tell the user the library cannot confirm or rule out that $name wrote these words, and suggest "
+            . "checking $name's own books.";
     }
 
     /** "John Owen (1616–1683), *Of the Mortification of Sin* (1668), p. 11" */

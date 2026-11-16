@@ -13,7 +13,7 @@ use ColLibrary\Tools;
 use ColLibraryTest\Fixture;
 
 require_once __DIR__ . '/fixture/testlib.php';
-col_src('Quote');
+col_src('Quote', 'Modern', 'ModernList');
 
 function call(array $args): array
 {
@@ -565,4 +565,39 @@ function test_catechism_marks_do_not_make_a_quotation_reworded(): void
     $r = Quote::align($ids('What is the chief end of man? A. Man\'s chief end is to glorify God'), [], $ids($book));
     assert_same(0, $r['edits'], 'quoted with the mark: word for word too');
     assert_true(in_array('a', $words('A man of sorrows'), true), 'the word "a" is still a word');
+}
+
+function test_writers_still_in_copyright(): void
+{
+    $find = static fn (string $n): ?string => \ColLibrary\Modern::find($n)['name'] ?? null;
+    assert_same('C. S. Lewis', $find('C.S. Lewis'));
+    assert_same('C. S. Lewis', $find('CS Lewis'));
+    assert_same('C. S. Lewis', $find('Clive Staples Lewis'));
+    assert_same('John Stott', $find('John R. W. Stott'), 'middle initials left out');
+    assert_same('J. I. Packer', $find('James I. Packer'));
+    assert_same('A. W. Tozer', $find('Tozer'), 'surname alone where the list says so');
+    assert_same('Tim Keller', $find('Rev. Timothy Keller'));
+    assert_same('Martin Luther King Jr.', $find('Dr. Martin Luther King, Jr.'));
+    assert_same('Pope John Paul II', $find('John Paul II'));
+    assert_same('Mother Teresa', $find('Teresa of Calcutta'));
+    assert_same(null, $find('Martin Luther'), 'not Martin Luther King');
+    assert_same(null, $find('Charles Spurgeon'));
+    assert_same(null, $find('Keller'), 'Helen Keller too: no surname alone');
+    assert_same(null, $find('John'));
+    // Matched by name only: not taken for a misspelt writer the library holds.
+    assert_same(['j', 'i', 'packer'], \ColLibrary\Modern::authorKeys('J. I. Packer'));
+    assert_same(['a', 'w', 'tozer'], \ColLibrary\Modern::authorKeys('A. W. Tozer'));
+    assert_same(['martin', 'luther', 'king'], \ColLibrary\Modern::authorKeys('Martin Luther King Jr.'));
+    $works = [['author' => 'Joseph Parker', 'author_slug' => 'joseph-parker'], ['author' => 'Henry Tozer', 'author_slug' => 'henry-tozer']];
+    assert_same(['parker'], Quote::authorKeysFor('Packer', $works), 'what the list prevents');
+    assert_false(Quote::byAuthor($works[0], \ColLibrary\Modern::authorKeys('J. I. Packer')));
+    assert_false(Quote::byAuthor($works[1], \ColLibrary\Modern::authorKeys('A. W. Tozer')));
+
+    $text = ok(['quote' => 'The quick brown fox jumps over the lazy dog', 'author' => 'John Piper']);
+    assert_contains('NOT FOUND', $text);
+    assert_contains("IN COPYRIGHT: the books of John Piper are still in copyright, so the library does not hold them.", $text);
+    assert_not_contains('no works by', $text);
+    $owen = ok(['quote' => 'be killing sin or it will be killing you', 'author' => 'C. S. Lewis']);
+    assert_contains('FOUND, BUT NOT BY', $owen);
+    assert_contains("IN COPYRIGHT: the books of C. S. Lewis (died 1963) are still in copyright, so the library does not hold them.", $owen);
 }
