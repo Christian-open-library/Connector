@@ -23,12 +23,15 @@ PROTOCOL = '2025-11-25'
 # The website's checker, run as visitors run it: (what it checks, the body sent, the verdict it must give, the author
 # of the work it must cite or None). Each answer was confirmed by hand against the library (16 November 2026). Keep
 # each one to a result that new books cannot change, and add a line whenever a wrong answer is fixed. The visitor limit
-# is 6 a minute, so they are spaced (CHECK_GAP); with these 9 the smoke test takes about 1½ minutes longer.
+# is 6 a minute, so they are spaced (CHECK_GAP); with these 10 the smoke test takes about 2 minutes longer.
 KNOWN_QUOTES = [
     ('word for word (share link: no comma)',
      {'quote': 'Be killing sin or it will be killing you', 'author': 'John Owen'}, 'exact', 'John Owen'),
     ('word for word (punctuation ignored)',
      {'quote': 'Be killing sin, or it will be killing you.', 'author': 'John Owen'}, 'exact', 'John Owen'),
+    ('word for word (a catechism\'s "A." is not a word)',
+     {'quote': "What is the chief end of man? Man's chief end is to glorify God, and to enjoy him for ever."},
+     'exact', 'Westminster Assembly'),
     ('worded differently',
      {'quote': 'Thou hast made us for thyself, and our hearts are restless until they rest in thee',
       'author': 'Augustine'}, 'reworded', 'Augustine'),

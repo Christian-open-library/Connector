@@ -524,3 +524,45 @@ function test_a_rewording_keeps_the_quotation_whole(): void
         'now you have got to get water before you can get it out'), 'only small words kept');
     assert_true($check('the bible is the cradle wherein christ is laid', 'the bible is the cradle wherein christ is laid'));
 }
+
+function test_catechism_marks_are_not_words(): void
+{
+    $label = static function (string $text, string $word): bool {
+        $off = strpos($text, $word);
+        assert_true($off !== false, "$word in $text");
+        return Quote::isLabel($text, $word, (int) $off);
+    };
+    $wsc = 'What is the chief end of man? A. Man\'s chief end is to glorify God, and to enjoy him for ever.';
+    assert_true(Quote::isLabel($wsc, 'A', (int) strpos($wsc, 'A.')), 'the answer mark after the question');
+    assert_true($label('Q. 1. What is the chief end of man?', 'Q'), 'the question mark at the start, before a number');
+    assert_true($label('for ever. Q. 2. What rule hath God given', 'Q'), 'after the last answer');
+    assert_true($label('A. Man\'s chief end is to glorify God', 'A'), 'a passage that opens with the answer');
+    assert_true($label('Who made you? Answ. God made me.', 'Answ'), 'older abbreviations');
+    assert_true($label('What is God? “A. God is a Spirit', 'A'), 'a quotation mark between');
+    assert_true($label('Quest. What is the misery of that estate?', 'Quest'));
+    // Not marks.
+    assert_false($label('A man of sorrows, and acquainted with grief', 'A'), 'the word "a"');
+    assert_false($label('as A. A. Hodge says. A. A. Hodge', 'A'), 'an initial');
+    assert_false(Quote::isLabel('Hodge. A. A. Hodge wrote', 'A', 7), 'an initial, even after a sentence');
+    assert_false($label('written by A. Barnes', 'A'), 'an initial after a word');
+    assert_false($label('Is it so? A great many think it.', 'A'), 'no full stop after it');
+    assert_false($label('chapter Q. The end', 'Q'), 'a "Q." after a word');
+    assert_false($label('What then? Answer. He came', 'Answer'), 'the whole word stays a word');
+}
+
+function test_catechism_marks_do_not_make_a_quotation_reworded(): void
+{
+    $store = \ColLibraryTest\Fixture\store_or_skip();
+    $check = new Quote($store, \ColLibraryTest\Fixture\fake_voyage($store), microtime(true) + 25);
+    $tokens = new \ReflectionMethod($check, 'tokens');
+    $ids = static fn (string $t): array => array_column($tokens->invoke($check, $t, null), 'id');
+    $words = static fn (string $t): array => array_column($tokens->invoke($check, $t, null), 'w');
+    $book = '1. What is the chief end of man? A. Man\'s chief end is to glorify God, and to enjoy him for ever. Q. 2. What rule';
+    assert_false(in_array('a', $words($book), true), 'the mark is left out of the book\'s words');
+    $given = 'What is the chief end of man? Man\'s chief end is to glorify God, and to enjoy him for ever.';
+    $r = Quote::align($ids($given), [], $ids($book));
+    assert_same(0, $r['edits'], 'quoted without the mark: word for word');
+    $r = Quote::align($ids('What is the chief end of man? A. Man\'s chief end is to glorify God'), [], $ids($book));
+    assert_same(0, $r['edits'], 'quoted with the mark: word for word too');
+    assert_true(in_array('a', $words('A man of sorrows'), true), 'the word "a" is still a word');
+}
