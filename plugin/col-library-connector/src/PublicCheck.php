@@ -11,9 +11,10 @@
  * never written down: the log line has the verdict and the time only.
  *
  * A finished answer is kept for public_check_cache_hours (24) so that a share link opened by many people is checked
- * once: the file's name and its AES-256-GCM key are both HMACs, with a server secret, of the build, the name and the
- * words, so a kept answer can be found and read only by someone who sends the same words again. A kept answer costs
- * no slot and counts only against the visitor's own limits. A new build starts afresh.
+ * once: the file's name and its AES-256-GCM key are both HMACs, with a server secret, of the build, the code release,
+ * the name and the words, so a kept answer can be found and read only by someone who sends the same words again. A kept
+ * answer costs no slot and counts only against the visitor's own limits. A new build or a new release starts afresh:
+ * an answer from older check code is never shown after the code has changed.
  *
  * Only the library's website may call it from a browser (Origin), and the answer carries the CORS header for
  * that origin only. That is a courtesy, not a wall: a script can send any Origin, so the limits are the guard.
@@ -106,7 +107,7 @@ final class PublicCheck
                 . self::MAX_GAPS . ', or paste the words in full.'], $origin);
         }
 
-        $kept = self::kept($config, $quote, $author);
+        $kept = self::kept($config, $quote, $author, Mcp::version());
         if ($kept !== null && ($answer = $kept->read()) !== null) {
             $now = $clock !== null ? (int) $clock() : time();
             $refusal = (new RateLimit($config->stateDir(), $config->maxCallsPerMinute(), $config->maxCallsPerDay(),
@@ -187,8 +188,12 @@ final class PublicCheck
         return self::answer(200, $out, $origin);
     }
 
-    /** Where the answer to these words would be kept, or null if answers are not kept (or the build is missing). */
-    private static function kept(Config $config, string $quote, string $author): ?KeptAnswer
+    /**
+     * Where the answer to these words would be kept, or null if answers are not kept (or the build is missing).
+     * $code is the release of the check code (Mcp::version(), with the git revision a deploy writes), so answers
+     * kept by older code are not found once a new release is live.
+     */
+    public static function kept(Config $config, string $quote, string $author, string $code): ?KeptAnswer
     {
         $hours = $config->publicCheckCacheHours();
         $db = $config->dataDir() . '/library.sqlite';
@@ -198,7 +203,7 @@ final class PublicCheck
         }
         $build = ($stat['ino'] ?? 0) . ':' . ($stat['size'] ?? 0) . ':' . ($stat['mtime'] ?? 0);
         $secret = hash('sha256', 'public-check-kept|' . $config->urlKey(), true);
-        return new KeptAnswer($config->stateDir() . '/public-answers', $secret, "$build\0$author\0$quote", $hours * 3600);
+        return new KeptAnswer($config->stateDir() . '/public-answers', $secret, "$build\0$code\0$author\0$quote", $hours * 3600);
     }
 
     /**
