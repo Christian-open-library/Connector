@@ -1,6 +1,7 @@
 # Security reviews
 
-*Newest first: 14 November 2026 (the quotation checker on the website; everything changed since 10 November)
+*Newest first: 16 November 2026 (the library search on the website); 14 November 2026 (the quotation checker on the
+website; everything changed since 10 November)
 and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
 
@@ -14,6 +15,30 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 16 November 2026: the library search on the website
+
+The website now has a search box on every page: anyone can search the books without signing in. It replaces the
+quotation checker, which was taken off the website the same day; the checker's address on the server (`/check`) was
+switched off in the same release. Before the search went live, a separate review read its code (the new `/search`
+address, the parts it shares with the checker, and the page that shows the answers) and tried the slowest searches it
+could make on the real server. **It found 2 small issues and fixed both before release; 3 things are accepted.**
+
+The search uses the checker's protections: it answers only the library's own website; each visitor and everyone
+together have limits a minute and a day; at most 3 searches run at once, each stopped after 12 seconds (the slowest
+search the review could build took under 7); its search-ranking allowance is its own, at most a fifth of the daily
+budget, so it can't use up what signed-in people rely on; documents shown by permission are never returned; the words
+searched are not logged; answers kept for a day are sealed with a key made from the words. The page puts every piece of
+the server's answer in as plain text, opens only web links, gives up after 30 seconds, and waits for a click before
+running a shared search inside another site's frame or a window another page opened.
+
+| Issue | Status |
+|---|---|
+| Two items in the server's answer (a book's year, and a message the server doesn't send yet) were put on the page without being made safe first. The server never sends web code there, so nothing could happen today. | **Fixed:** both are made safe like everything else. |
+| Adding `?preview` to the address showed sample answers instead of real ones, so a link could show answers the library didn't give. | **Fixed:** removed. |
+| A page that sends you to a shared search with an ordinary link, or opens it in a new window that can't reach back, runs that search at once. | **Accepted:** that is what share links are for; it costs one search from the visitor's own daily limit. |
+| A kept answer comes back faster than a new search, so someone who guesses the exact words could tell that somebody searched them in the last day. | **Accepted:** they learn nothing about who searched, and must guess the words exactly. |
+| A script can still use up the day's total for everyone (3,000 searches). | **Accepted:** the search is then busy until midnight UTC; spending stays capped. |
 
 ## 14 November 2026: the quotation checker on the website
 

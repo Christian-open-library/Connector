@@ -8,6 +8,7 @@
  *   GET  /.well-known/oauth-protected-resource[/mcp], /.well-known/oauth-authorization-server
  *   GET  /support.svg?theme=light|dark   the public cost card on the library's front page (Support)
  *   POST /check       the public quotation checker on the library's website, no sign-in (PublicCheck)
+ *   POST /search      the public library search on the library's website, no sign-in (PublicSearch)
  *
  * Anything else answers 404 {}. The release layout is <release>/www/index.php next to <release>/src/.
  * The config path comes from the LIBRARY_CONFIG environment variable (set in the PHP-FPM pool).
@@ -83,6 +84,15 @@ if ($path === '/check' || $path === '/check/') {
     // Set by Cloudflare (nginx listens only on 127.0.0.1, for the tunnel), so the caller cannot choose it.
     $visitor = (string) ($_SERVER['HTTP_CF_CONNECTING_IP'] ?? '');
     col_send(ColLibrary\PublicCheck::response($method, col_headers(), $body, $visitor), $method);
+    exit;
+}
+if ($path === '/search' || $path === '/search/') {
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(ColLibrary\Http::TIME_LIMIT);
+    }
+    $body = (string) file_get_contents('php://input', false, null, 0, ColLibrary\PublicSearch::MAX_BODY + 1);
+    $visitor = (string) ($_SERVER['HTTP_CF_CONNECTING_IP'] ?? '');
+    col_send(ColLibrary\PublicSearch::response($method, col_headers(), $body, $visitor), $method);
     exit;
 }
 $signedIn = is_array($oauth) && ($path === '/mcp' || $path === '/mcp/');

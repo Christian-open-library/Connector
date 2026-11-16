@@ -216,13 +216,13 @@ final class PublicCheck
      * closed or PHP ends the request), or null if every slot is taken.
      * @return resource|null
      */
-    private static function slot(string $stateDir)
+    public static function slot(string $stateDir, string $prefix = 'public-check', int $slots = self::SLOTS)
     {
         if (!is_dir($stateDir) && !@mkdir($stateDir, 0700, true) && !is_dir($stateDir)) {
             return null;
         }
-        for ($i = 0; $i < self::SLOTS; $i++) {
-            $file = "$stateDir/public-check-$i.lock";
+        for ($i = 0; $i < $slots; $i++) {
+            $file = "$stateDir/$prefix-$i.lock";
             $h = @fopen($file, 'c');
             if ($h === false) {
                 continue;
@@ -242,7 +242,7 @@ final class PublicCheck
      * address counts by its /64 network (one connection usually has a whole /64 to choose from). No address (a
      * request that did not come through Cloudflare) counts as one shared visitor.
      */
-    private const SMOKE = 'smoke-test';
+    public const SMOKE = 'smoke-test';
 
     /** What the smoke test sends in X-Library-Smoke: made from the connector's key, so only its holder can send it. */
     public static function smokeCode(Config $config): string
@@ -660,7 +660,7 @@ final class PublicCheck
     }
 
     /** A JSON answer, with the CORS header when the origin is the website's. */
-    private static function answer(int $status, array $data, ?string $origin, array $extra = []): Response
+    public static function answer(int $status, array $data, ?string $origin, array $extra = []): Response
     {
         $headers = ['Cache-Control' => 'no-store', 'X-Content-Type-Options' => 'nosniff', 'Vary' => 'Origin'] + $extra;
         if ($origin !== null) {

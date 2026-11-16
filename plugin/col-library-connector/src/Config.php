@@ -38,9 +38,11 @@ final class Config
         // search costs: about rerank_candidates x rerank_doc_chars / 3.7 tokens (50 x 800: ~10,700, measured 2026-11-13).
         'rerank_candidates'         => 50,
         'rerank_doc_chars'          => 800,
-        // The public quotation checker on the website (PublicCheck): on or off, the pages that may call it, and its
-        // limits per visitor and for everyone together (its own counters, apart from the signed-in limits above).
-        'public_check'                       => true,
+        // The public quotation checker (PublicCheck, POST /check): off since 2026-11-16, when the website's library
+        // search replaced it (the code stays for now). The pages that may call the public routes, and their limits per
+        // visitor and for everyone together (their own counters, apart from the signed-in limits above), shared by
+        // the checker and the search.
+        'public_check'                       => false,
         'public_check_origins'               => self::PUBLIC_CHECK_ORIGINS,
         'public_check_visitor_per_minute'    => 6,
         'public_check_visitor_per_day'       => 60,
@@ -49,6 +51,13 @@ final class Config
         // Hours an answer is kept (encrypted with a key made from the words checked), so a shared link opened by many
         // people is checked once. 0: never kept.
         'public_check_cache_hours'           => 24,
+        // The public library search on the website (PublicSearch): on or off. It answers the same pages and shares the
+        // checker's limits above (public_check_*); its re-ranking has its own daily allowance, apart from everyone
+        // else's (past it, searches still answer, in keyword + meaning order). One search re-ranks ~10,700 tokens.
+        // Like any one person's allowance it is capped at a fifth of max_voyage_tokens_per_day (RateLimit::
+        // LINK_VOYAGE_DIVISOR): with 15M a day, at most 3M. Raising it above that needs the daily budget raised too.
+        'public_search'                      => true,
+        'public_search_voyage_tokens_per_day' => 3_000_000,
         'allowed_origins'           => self::DEFAULT_ORIGINS,
         'log_level'                 => 'off',
         'log_queries'               => false,
@@ -71,6 +80,7 @@ final class Config
         'public_check_per_minute'         => [0, 100_000],
         'public_check_per_day'            => [0, 10_000_000],
         'public_check_cache_hours'        => [0, 168],
+        'public_search_voyage_tokens_per_day' => [1, 1_000_000_000_000],
     ];
 
     private function __construct(private readonly array $values, private readonly string $path)
@@ -206,7 +216,7 @@ final class Config
             }
             $v['public_check_origins'] = $normalized;
         }
-        foreach (['log_queries', 'voyage_fake', 'public_check'] as $k) {
+        foreach (['log_queries', 'voyage_fake', 'public_check', 'public_search'] as $k) {
             // Strictly a bool: voyage_fake must never switch on by accident (e.g. from "0").
             if (!is_bool($v[$k])) {
                 $errors[] = "$k must be true or false";
@@ -391,7 +401,7 @@ final class Config
         return $this->values['allowed_origins'];
     }
 
-    /** True unless the config file sets 'public_check' => false: the website's quotation checker answers. */
+    /** True only if the config file sets 'public_check' => true: the retired public quotation checker answers. */
     public function publicCheck(): bool
     {
         return $this->values['public_check'];
@@ -412,6 +422,18 @@ final class Config
             'minute' => $this->values['public_check_per_minute'],
             'day' => $this->values['public_check_per_day'],
         ];
+    }
+
+    /** True unless the config file sets 'public_search' => false: the website's library search answers. */
+    public function publicSearch(): bool
+    {
+        return $this->values['public_search'];
+    }
+
+    /** Re-ranking tokens per UTC day for all public searches together (RateLimit counts them as one person). */
+    public function publicSearchVoyageTokensPerDay(): int
+    {
+        return $this->values['public_search_voyage_tokens_per_day'];
     }
 
     /** Hours the public checker keeps an answer for a repeat of the same check (0: none). */

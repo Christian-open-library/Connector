@@ -23,7 +23,8 @@ const TIME = Fixture\FIXED_TIME;
 function cfg(array $overrides = []): Config
 {
     Fixture\store_or_skip();
-    return Fixture\config($overrides);
+    // The checker is off by default since 2026-11-16 (the website's search replaced it); its tests switch it on.
+    return Fixture\config($overrides + ['public_check' => true]);
 }
 
 function post(array|string $body, array $headers = [], string $ip = '203.0.113.7', ?Config $config = null,
@@ -217,6 +218,9 @@ function test_only_the_website_may_call_it(): void
     assert_same(SITE, $pre->headers['Access-Control-Allow-Origin']);
     assert_same(405, post('', [], '1.2.3.4', null, 'GET')->status);
     assert_same(404, post(['quote' => 'be killing sin or it will'], [], '1.2.3.4', cfg(['public_check' => false]))->status);
+    // Off unless the config file switches it on (retired 2026-11-16).
+    Fixture\store_or_skip();
+    assert_same(404, post(['quote' => 'be killing sin or it will'], [], '1.2.3.4', Fixture\config())->status, 'off by default');
     assert_same(403, post(['quote' => 'be killing sin or it will'], [], '1.2.3.4',
         cfg(['public_check_origins' => ['https://other.example']]))->status);
     assert_throws(\ColLibrary\ConfigException::class, fn () => cfg(['public_check_origins' => ['not an origin']]));

@@ -23,7 +23,8 @@ final class KeptAnswer
     private readonly string $file;
     private readonly string $key;
 
-    public function __construct(private readonly string $dir, string $secret, string $what, private readonly int $seconds)
+    public function __construct(private readonly string $dir, string $secret, string $what, private readonly int $seconds,
+                                private readonly string $field = 'verdict')
     {
         $this->file = $dir . '/' . hash_hmac('sha256', "name\0$what", $secret) . '.bin';
         $this->key = hash_hmac('sha256', "key\0$what", $secret, true);
@@ -50,7 +51,7 @@ final class KeptAnswer
             return null;
         }
         $data = json_decode($plain, true);
-        return is_array($data) && isset($data['verdict']) ? $data : null;
+        return is_array($data) && isset($data[$this->field]) ? $data : null;
     }
 
     /** @param array<string,mixed> $answer */

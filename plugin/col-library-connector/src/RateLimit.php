@@ -171,13 +171,19 @@ final class RateLimit
      * (a daily code, PublicCheck::visitorCode) a minute and a day, and for all visitors together a minute and a
      * day. These counters are its own: the checker does not use the signed-in limits, and they do not use its.
      * Yesterday's visitor codes are deleted on the first check of each minute. A kept answer ($kept: PublicCheck's
-     * answers kept for repeats of the same check) counts only against the visitor's own limits.
+     * answers kept for repeats of the same check) counts only against the visitor's own limits. The website's library
+     * search (PublicSearch) shares these counters; $words names what is counted in the messages (PUBLIC_SEARCH_WORDS).
      * @param array{visitor_minute: int, visitor_day: int, minute: int, day: int} $max
+     * @param array{0: string, 1: string, 2: string} $words plural, the service's name, the verb
      * @return array{0: string, 1: string, 2: int}|null null if the check may run, else [which limit, a message for
      *         the visitor, seconds to wait]
      */
-    public function takePublic(string $visitor, array $max, bool $kept = false): ?array
+    public const PUBLIC_CHECK_WORDS = ['checks', 'The checker', 'check'];
+    public const PUBLIC_SEARCH_WORDS = ['searches', 'The search', 'search'];
+
+    public function takePublic(string $visitor, array $max, bool $kept = false, array $words = self::PUBLIC_CHECK_WORDS): ?array
     {
+        [$things, $service, $verb] = $words;
         $now = $this->now();
         $minute = intdiv($now, 60);
         $day = intdiv($now, 86400);
@@ -187,14 +193,15 @@ final class RateLimit
         $hours = max(1, (int) ceil($untilReset / 3600));
         $resets = "It starts again at 00:00 UTC, in about $hours hour" . ($hours === 1 ? '' : 's') . '.';
         try {
-            return $this->write(function (\PDO $db) use ($visitor, $max, $kept, $minute, $day, $wait, $untilReset, $resets): ?array {
+            return $this->write(function (\PDO $db) use ($visitor, $max, $kept, $minute, $day, $wait, $untilReset, $resets,
+                                                    $things, $service, $verb): ?array {
                 $allMinute = $this->value($db, 'public_minute', $minute);
                 if ($this->value($db, "visitor_minute:$visitor", $minute) >= $max['visitor_minute']) {
-                    return ['visitor_minute', "That's a lot of checks in one minute. Wait about $wait seconds, then try again.", $wait];
+                    return ['visitor_minute', "That's a lot of $things in one minute. Wait about $wait seconds, then try again.", $wait];
                 }
                 if ($this->value($db, "visitor_day:$visitor", $day) >= $max['visitor_day']) {
-                    return ['visitor_day', "You've reached today's limit of {$max['visitor_day']} checks on this page. $resets "
-                        . 'To check more, add the library to your AI app: it is free.', $untilReset];
+                    return ['visitor_day', "You've reached today's limit of {$max['visitor_day']} $things on this page. $resets "
+                        . "To $verb more, add the library to your AI app: it is free.", $untilReset];
                 }
                 if ($kept) {   // a kept answer costs the server almost nothing: only the visitor's own limits apply
                     $this->add($db, "visitor_minute:$visitor", $minute, 1);
@@ -202,10 +209,10 @@ final class RateLimit
                     return null;
                 }
                 if ($allMinute >= $max['minute']) {
-                    return ['minute', "The checker is busy right now. Wait about $wait seconds, then try again.", $wait];
+                    return ['minute', "$service is busy right now. Wait about $wait seconds, then try again.", $wait];
                 }
                 if ($this->value($db, 'public_day', $day) >= $max['day']) {
-                    return ['day', "The checker has answered all it can for today. $resets To check now, add the library "
+                    return ['day', "$service has answered all it can for today. $resets To $verb now, add the library "
                         . 'to your AI app: it is free.', $untilReset];
                 }
                 if ($allMinute === 0) {
@@ -222,7 +229,7 @@ final class RateLimit
         } catch (\Throwable $e) {
             // Unlike takeCall, refuse: nobody signed in, so nothing else stands between the page and the server.
             $this->log?->error('ratelimit_unavailable', ['op' => 'takePublic', 'error' => $e->getMessage()]);
-            return ['unavailable', 'The checker is not available right now. Please try again in a few minutes.', 60];
+            return ['unavailable', "$service is not available right now. Please try again in a few minutes.", 60];
         }
     }
 
