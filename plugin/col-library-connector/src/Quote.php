@@ -383,6 +383,34 @@ final class Quote
 
     // ------------------------------------------------------------------------------- tokens
 
+    /** Marks of a catechism's question and answer ("Q. 1. What is ...? A. Man's chief end ..."): not words of the text. */
+    private const ANSWER_MARKS = ['A', 'Ans', 'Answ'];
+    private const QUESTION_MARKS = ['Q', 'Qu', 'Ques', 'Quest'];
+
+    /**
+     * True when $word at byte $off of $text is a catechism's question or answer mark, not a word: "A", "Ans" or "Answ"
+     * just after a question mark, or "Q", "Qu", "Ques" or "Quest" at the start or just after a sentence ends, followed
+     * by "." or ":" and a capital or a number ("? A. Man's chief end", ". Q. 2. What rule"). The start of the text
+     * counts for both. An initial is not a mark: "A. A. Hodge" keeps both, and "by A. Barnes" its "A".
+     * Applied to the quotation and the passages alike, so "man? A. Man's" and "man? Man's" are the same words.
+     */
+    public static function isLabel(string $text, string $word, int $off): bool
+    {
+        $answer = in_array($word, self::ANSWER_MARKS, true);
+        if (!$answer && !in_array($word, self::QUESTION_MARKS, true)) {
+            return false;
+        }
+        if (preg_match('/\G[.:]\s+(?!\p{Lu}\.)(?=[\p{Lu}\p{N}])/u', $text, $unused, 0, $off + strlen($word)) !== 1) {
+            return false;
+        }
+        $before = (string) preg_replace('/[\s"\'“”‘’()\[\]*_]+$/u', '', substr($text, 0, $off));
+        if ($before === '') {
+            return true;
+        }
+        $last = substr($before, -1);
+        return $answer ? $last === '?' : str_contains('.?!:;', $last);
+    }
+
     /**
      * Tokens of a text in modern spelling, each with the byte offset and length of the word it came
      * from (a word whose modern form has two words gives two tokens) and the printed page it is on.
@@ -398,6 +426,9 @@ final class Quote
             if (isset($hit[1]) && $hit[1][1] >= 0) {
                 $page = trim($hit[1][0]);
                 continue;
+            }
+            if (self::isLabel($text, $hit[0][0], $hit[0][1])) {
+                continue;   // "A." before a catechism's answer is not one of its words
             }
             foreach (Text::words(Text::normalize($hit[0][0])) as $w) {
                 $raw[] = ['w' => $w, 'off' => $hit[0][1], 'len' => strlen($hit[0][0]), 'page' => $page];
