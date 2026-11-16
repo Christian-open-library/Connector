@@ -319,6 +319,18 @@ function test_two_ordinary_words_are_a_difference_not_a_misreading(): void
     assert_same(['power' => true], (new \ColLibrary\Store(scan_dir()))->headwords(['power', 'liis']));
 }
 
+function test_a_slip_in_the_quotation_is_not_a_misreading(): void
+{
+    // "kiling" against the book's "killing": the book's word is common, the quotation's twenty times rarer.
+    $q = new Quote(Fixture\store_or_skip(scan_dir()), Fixture\fake_voyage(Fixture\store_or_skip(scan_dir())), microtime(true) + 20);
+    $cache = new \ReflectionProperty($q, 'countCache');
+    $cache->setValue($q, ['killing' => 2000, 'kiling' => 3, 'sinner' => 2000, 'sinners' => 1800, 'wisdom' => 40, 'wisdorn' => 0]);
+    $slip = new \ReflectionMethod($q, 'slip');
+    assert_true($slip->invoke($q, 'kiling', 'killing'));
+    assert_false($slip->invoke($q, 'sinners', 'sinner'), 'two common forms are a difference of wording');
+    assert_false($slip->invoke($q, 'wisdorn', 'wisdom'), 'a word under 100 passages decides nothing');
+}
+
 function test_single_words_joined_by_gaps_are_not_word_for_word(): void
 {
     $text = ok(['quote' => 'Great ... Lord ... greatly ... praised', 'author' => 'Augustine']);
@@ -336,6 +348,52 @@ function test_single_words_joined_by_gaps_are_not_word_for_word(): void
     assert_same(\ColLibrary\QuoteResult::SCAN_LETTERS, Quote::verdict(['edits' => 0, 'misread' => 1, 'thin_pieces' => true]));
     assert_same(\ColLibrary\QuoteResult::REWORDED, Quote::verdict(['edits' => 1, 'misread' => 1]));
     assert_same(\ColLibrary\QuoteResult::EXACT, Quote::verdict(['edits' => 0, 'misread' => 0, 'thin_pieces' => false]));
+}
+
+function test_longer_and_place_names_match_the_library_author(): void
+{
+    $works = [['author' => 'Charles Spurgeon', 'author_slug' => 'charles-spurgeon'], ['author' => 'Augustine', 'author_slug' => 'augustine'],
+              ['author' => 'Francis of Assisi', 'author_slug' => 'francis-of-assisi']];
+    assert_same(['charles', 'spurgeon'], Quote::authorKeysFor('Charles Haddon Spurgeon', $works), 'middle name dropped');
+    assert_same(['spurgeon'], Quote::authorKeysFor('C. H. Spurgeon', $works));
+    assert_same(['augustine'], Quote::authorKeysFor('Augustine of Hippo', $works), 'the place dropped');
+    assert_same(['augustine'], Quote::authorKeysFor('St. Augustine', $works));
+    assert_same(['francis', 'assisi'], Quote::authorKeysFor('Francis of Assisi', $works), 'kept when the library has it so');
+    assert_same(['john', 'haddon', 'owen'], Quote::authorKeysFor('John Haddon Owen', $works), 'no shorter form matches either');
+    assert_same(['thomas', 'brooks'], Quote::authorKeysFor('Thomas Brooks', $works));
+
+    $text = ok(['quote' => 'be killing sin or it will be killing you', 'author' => 'Dr. John Haddon Owen']);
+    assert_contains('FOUND WORD FOR WORD', $text, 'John Owen in the library');
+    $text = ok(['quote' => 'Thou hast made us for Thyself, and our heart is restless', 'author' => 'Augustine of Hippo']);
+    assert_not_contains('NOT BY', $text);
+}
+
+function test_a_misspelt_name_finds_the_writer(): void
+{
+    $works = [['author' => 'Charles Spurgeon', 'author_slug' => 'charles-spurgeon'], ['author' => 'Augustine', 'author_slug' => 'augustine'],
+              ['author' => 'Augustine', 'author_slug' => 'augustine'], ['author' => 'John Owen', 'author_slug' => 'john-owen'],
+              ['author' => 'Jonathan Edwards', 'author_slug' => 'jonathan-edwards']];
+    assert_same(['augustine'], Quote::authorKeysFor('Augustin', $works), 'one letter short');
+    assert_same(['charles', 'spurgeon'], Quote::authorKeysFor('Charles Spurgen', $works));
+    assert_same(['jonathan', 'edwards'], Quote::authorKeysFor('Johnathan Edwards', $works), 'two letters in a long word');
+    assert_same(['spurgeon'], Quote::authorKeysFor('Spurgon', $works));
+    assert_same(['john', 'owen'], Quote::authorKeysFor('John Owens', $works));
+    assert_same(['jon', 'owen'], Quote::authorKeysFor('Jon Owen', $works), 'short words must be exact');
+    assert_same(['benjamin', 'franklin'], Quote::authorKeysFor('Benjamin Franklin', $works), 'no writer near it');
+    assert_same(['lewis'], Quote::authorKeysFor('C. S. Lewis', $works));
+}
+
+function test_out_of_time_is_marked_incomplete(): void
+{
+    $store = \ColLibraryTest\Fixture\store_or_skip();
+    $check = new Quote($store, \ColLibraryTest\Fixture\fake_voyage($store), microtime(true) + 0.5);
+    $r = $check->check('be killing sin or it will be killing you', 'Owen');
+    assert_true($r->incomplete, 'every step skipped');
+    assert_same(\ColLibrary\QuoteResult::NOT_FOUND, $r->verdict);
+    assert_contains('The check ran short of time', implode(' ', $r->notes));
+    $full = (new Quote($store, \ColLibraryTest\Fixture\fake_voyage($store), microtime(true) + 25))->check('be killing sin or it will be killing you', 'Owen');
+    assert_false($full->incomplete);
+    assert_same([], array_values(array_filter($full->notes, static fn (string $n): bool => str_contains($n, 'time'))));
 }
 
 function test_pieces_leave_out_the_commonest_words(): void
@@ -407,24 +465,6 @@ function test_windows_list_their_passages_without_ranking(): void
     assert_true(($check->trace['window_hits'] ?? 0) >= 2, 'the windows found both editions');
     assert_false(isset($check->trace['windows_common']), 'no window is common wording in the fixture');
     assert_same(\ColLibrary\QuoteResult::REWORDED, $r->verdict);
-}
-
-function test_longer_and_place_names_match_the_library_author(): void
-{
-    $works = [['author' => 'Charles Spurgeon', 'author_slug' => 'charles-spurgeon'], ['author' => 'Augustine', 'author_slug' => 'augustine'],
-              ['author' => 'Francis of Assisi', 'author_slug' => 'francis-of-assisi']];
-    assert_same(['charles', 'spurgeon'], Quote::authorKeysFor('Charles Haddon Spurgeon', $works), 'middle name dropped');
-    assert_same(['spurgeon'], Quote::authorKeysFor('C. H. Spurgeon', $works));
-    assert_same(['augustine'], Quote::authorKeysFor('Augustine of Hippo', $works), 'the place dropped');
-    assert_same(['augustine'], Quote::authorKeysFor('St. Augustine', $works));
-    assert_same(['francis', 'assisi'], Quote::authorKeysFor('Francis of Assisi', $works), 'kept when the library has it so');
-    assert_same(['john', 'haddon', 'owen'], Quote::authorKeysFor('John Haddon Owen', $works), 'no shorter form matches either');
-    assert_same(['thomas', 'brooks'], Quote::authorKeysFor('Thomas Brooks', $works));
-
-    $text = ok(['quote' => 'be killing sin or it will be killing you', 'author' => 'Dr. John Haddon Owen']);
-    assert_contains('FOUND WORD FOR WORD', $text, 'John Owen in the library');
-    $text = ok(['quote' => 'Thou hast made us for Thyself, and our heart is restless', 'author' => 'Augustine of Hippo']);
-    assert_not_contains('NOT BY', $text);
 }
 
 function test_initials_tell_two_writers_of_one_surname_apart(): void

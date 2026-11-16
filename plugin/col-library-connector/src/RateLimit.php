@@ -146,19 +146,83 @@ final class RateLimit
                 }
                 if ($perMinute === 0) {
                     // First call of a new minute: drop counters nobody will read again (minute
-                    // counters before this minute, day counters older than a week).
+                    // counters before this minute, day counters older than a week, and the public checker's
+                    // visitor codes of earlier days, which the privacy page says are deleted the next day).
                     $db->prepare("DELETE FROM counters WHERE
-                        ((name = ? OR name LIKE 'link^_minute:%' ESCAPE '^' OR name LIKE 'pool^_minute:%' ESCAPE '^')
+                        ((name = ? OR name LIKE 'link^_minute:%' ESCAPE '^' OR name LIKE 'pool^_minute:%' ESCAPE '^'
+                            OR name = 'public_minute' OR name LIKE 'visitor^_minute:%' ESCAPE '^')
                             AND period < ?)
+                        OR (name LIKE 'visitor^_day:%' ESCAPE '^' AND period < ?)
                         OR (name <> ? AND name NOT LIKE 'link^_minute:%' ESCAPE '^' AND name NOT LIKE 'pool^_minute:%' ESCAPE '^'
+                            AND name <> 'public_minute' AND name NOT LIKE 'visitor^_minute:%' ESCAPE '^'
                             AND name NOT LIKE 'spend^_%' ESCAPE '^' AND period < ?)")
-                        ->execute([self::CALLS_MINUTE, $minute, self::CALLS_MINUTE, $day - 7]);
+                        ->execute([self::CALLS_MINUTE, $minute, $day, self::CALLS_MINUTE, $day - 7]);
                 }
                 return null;
             });
         } catch (\Throwable $e) {
             $this->log?->error('ratelimit_unavailable', ['op' => 'takeCall', 'error' => $e->getMessage()]);
             return null;
+        }
+    }
+
+    /**
+     * Counts one check by the website's public quotation checker (PublicCheck) if its limits allow it: per visitor
+     * (a daily code, PublicCheck::visitorCode) a minute and a day, and for all visitors together a minute and a
+     * day. These counters are its own: the checker does not use the signed-in limits, and they do not use its.
+     * Yesterday's visitor codes are deleted on the first check of each minute. A kept answer ($kept: PublicCheck's
+     * answers kept for repeats of the same check) counts only against the visitor's own limits.
+     * @param array{visitor_minute: int, visitor_day: int, minute: int, day: int} $max
+     * @return array{0: string, 1: string, 2: int}|null null if the check may run, else [which limit, a message for
+     *         the visitor, seconds to wait]
+     */
+    public function takePublic(string $visitor, array $max, bool $kept = false): ?array
+    {
+        $now = $this->now();
+        $minute = intdiv($now, 60);
+        $day = intdiv($now, 86400);
+        $visitor = preg_match('/^[0-9a-f]{1,64}$/D', $visitor) === 1 ? $visitor : 'unknown';
+        $wait = 60 - $now % 60;
+        $untilReset = 86400 - $now % 86400;
+        $hours = max(1, (int) ceil($untilReset / 3600));
+        $resets = "It starts again at 00:00 UTC, in about $hours hour" . ($hours === 1 ? '' : 's') . '.';
+        try {
+            return $this->write(function (\PDO $db) use ($visitor, $max, $kept, $minute, $day, $wait, $untilReset, $resets): ?array {
+                $allMinute = $this->value($db, 'public_minute', $minute);
+                if ($this->value($db, "visitor_minute:$visitor", $minute) >= $max['visitor_minute']) {
+                    return ['visitor_minute', "That's a lot of checks in one minute. Wait about $wait seconds, then try again.", $wait];
+                }
+                if ($this->value($db, "visitor_day:$visitor", $day) >= $max['visitor_day']) {
+                    return ['visitor_day', "You've reached today's limit of {$max['visitor_day']} checks on this page. $resets "
+                        . 'To check more, add the library to your AI app: it is free.', $untilReset];
+                }
+                if ($kept) {   // a kept answer costs the server almost nothing: only the visitor's own limits apply
+                    $this->add($db, "visitor_minute:$visitor", $minute, 1);
+                    $this->add($db, "visitor_day:$visitor", $day, 1);
+                    return null;
+                }
+                if ($allMinute >= $max['minute']) {
+                    return ['minute', "The checker is busy right now. Wait about $wait seconds, then try again.", $wait];
+                }
+                if ($this->value($db, 'public_day', $day) >= $max['day']) {
+                    return ['day', "The checker has answered all it can for today. $resets To check now, add the library "
+                        . 'to your AI app: it is free.', $untilReset];
+                }
+                if ($allMinute === 0) {
+                    $db->prepare("DELETE FROM counters WHERE
+                        ((name = 'public_minute' OR name LIKE 'visitor^_minute:%' ESCAPE '^') AND period < ?)
+                        OR (name LIKE 'visitor^_day:%' ESCAPE '^' AND period < ?)")->execute([$minute, $day]);
+                }
+                $this->add($db, 'public_minute', $minute, 1);
+                $this->add($db, 'public_day', $day, 1);
+                $this->add($db, "visitor_minute:$visitor", $minute, 1);
+                $this->add($db, "visitor_day:$visitor", $day, 1);
+                return null;
+            });
+        } catch (\Throwable $e) {
+            // Unlike takeCall, refuse: nobody signed in, so nothing else stands between the page and the server.
+            $this->log?->error('ratelimit_unavailable', ['op' => 'takePublic', 'error' => $e->getMessage()]);
+            return ['unavailable', 'The checker is not available right now. Please try again in a few minutes.', 60];
         }
     }
 

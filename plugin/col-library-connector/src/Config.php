@@ -17,6 +17,8 @@ final class Config
 {
     public const DEFAULT_ORIGINS = ['https://claude.ai', 'https://claude.com', 'https://www.claude.ai', 'https://chatgpt.com', 'https://chat.openai.com', 'https://gemini.google.com', 'https://copilot.microsoft.com', 'https://chat.mistral.ai'];
     public const LOG_LEVELS = ['off', 'info', 'debug'];
+    /** Websites whose pages may call the public quotation checker (PublicCheck) from a browser. */
+    public const PUBLIC_CHECK_ORIGINS = ['https://christianopenlibrary.org', 'https://www.christianopenlibrary.org'];
 
     /** Values used when a key is absent. data_dir and state_dir default relative to the file. */
     private const DEFAULTS = [
@@ -36,6 +38,17 @@ final class Config
         // search costs: about rerank_candidates x rerank_doc_chars / 3.7 tokens (50 x 800: ~10,700, measured 2026-11-13).
         'rerank_candidates'         => 50,
         'rerank_doc_chars'          => 800,
+        // The public quotation checker on the website (PublicCheck): on or off, the pages that may call it, and its
+        // limits per visitor and for everyone together (its own counters, apart from the signed-in limits above).
+        'public_check'                       => true,
+        'public_check_origins'               => self::PUBLIC_CHECK_ORIGINS,
+        'public_check_visitor_per_minute'    => 6,
+        'public_check_visitor_per_day'       => 60,
+        'public_check_per_minute'            => 30,
+        'public_check_per_day'               => 3000,
+        // Hours an answer is kept (encrypted with a key made from the words checked), so a shared link opened by many
+        // people is checked once. 0: never kept.
+        'public_check_cache_hours'           => 24,
         'allowed_origins'           => self::DEFAULT_ORIGINS,
         'log_level'                 => 'off',
         'log_queries'               => false,
@@ -53,6 +66,11 @@ final class Config
         'max_licensed_passages_per_person_per_day' => [0, 1_000_000],
         'rerank_candidates'         => [2, 1000],
         'rerank_doc_chars'          => [200, 20000],
+        'public_check_visitor_per_minute' => [0, 10_000],
+        'public_check_visitor_per_day'    => [0, 1_000_000],
+        'public_check_per_minute'         => [0, 100_000],
+        'public_check_per_day'            => [0, 10_000_000],
+        'public_check_cache_hours'        => [0, 168],
     ];
 
     private function __construct(private readonly array $values, private readonly string $path)
@@ -173,7 +191,22 @@ final class Config
                 $errors[] = "$k must be an integer from $min to $max";
             }
         }
-        foreach (['log_queries', 'voyage_fake'] as $k) {
+        $origins = $v['public_check_origins'];
+        if (!is_array($origins) || !array_is_list($origins)) {
+            $errors[] = 'public_check_origins must be a list of origins such as https://christianopenlibrary.org';
+        } else {
+            $normalized = [];
+            foreach ($origins as $o) {
+                $n = is_string($o) ? self::normalizeOrigin($o) : null;
+                if ($n === null) {
+                    $errors[] = 'public_check_origins entries must look like https://host or https://host:port';
+                    break;
+                }
+                $normalized[] = $n;
+            }
+            $v['public_check_origins'] = $normalized;
+        }
+        foreach (['log_queries', 'voyage_fake', 'public_check'] as $k) {
             // Strictly a bool: voyage_fake must never switch on by accident (e.g. from "0").
             if (!is_bool($v[$k])) {
                 $errors[] = "$k must be true or false";
@@ -356,6 +389,35 @@ final class Config
     public function allowedOrigins(): array
     {
         return $this->values['allowed_origins'];
+    }
+
+    /** True unless the config file sets 'public_check' => false: the website's quotation checker answers. */
+    public function publicCheck(): bool
+    {
+        return $this->values['public_check'];
+    }
+
+    /** @return list<string> normalized origins of the pages that may call the public checker */
+    public function publicCheckOrigins(): array
+    {
+        return $this->values['public_check_origins'];
+    }
+
+    /** @return array{visitor_minute: int, visitor_day: int, minute: int, day: int} the public checker's limits */
+    public function publicCheckLimits(): array
+    {
+        return [
+            'visitor_minute' => $this->values['public_check_visitor_per_minute'],
+            'visitor_day' => $this->values['public_check_visitor_per_day'],
+            'minute' => $this->values['public_check_per_minute'],
+            'day' => $this->values['public_check_per_day'],
+        ];
+    }
+
+    /** Hours the public checker keeps an answer for a repeat of the same check (0: none). */
+    public function publicCheckCacheHours(): int
+    {
+        return $this->values['public_check_cache_hours'];
     }
 
     public function logLevel(): string

@@ -550,6 +550,48 @@ final class Store
             [$translation, $book])->fetchColumn();
     }
 
+    /**
+     * Verses of one translation whose text matches a LIKE pattern, in Bible order (a scan of that translation:
+     * about 31,000 short rows). The caller builds the pattern from letters, digits and "%" only.
+     * @return list<array{book:int, chapter:int, verse:int, text:string}>
+     */
+    public function bibleLike(string $translation, string $pattern, int $limit): array
+    {
+        $out = [];
+        foreach ($this->run('SELECT book, chapter, verse, text FROM bible WHERE translation = ? AND text LIKE ? '
+            . 'ORDER BY book, chapter, verse LIMIT ?', [$translation, $pattern, $limit])->fetchAll(\PDO::FETCH_NUM) as $r) {
+            $out[] = ['book' => (int) $r[0], 'chapter' => (int) $r[1], 'verse' => (int) $r[2], 'text' => (string) $r[3]];
+        }
+        return $out;
+    }
+
+    /**
+     * Verses, in any translation, that have at least two of up to three given words (one scan of the bible table).
+     * The caller passes words of letters and digits only.
+     * @param list<string> $words 2 or 3 words
+     * @return list<array{translation:string, book:int, chapter:int, verse:int, text:string}>
+     */
+    public function bibleWithWords(array $words, int $limit): array
+    {
+        $words = array_values($words);
+        $pairs = count($words) >= 3 ? [[0, 1], [0, 2], [1, 2]] : [[0, 1]];
+        $sql = [];
+        $params = [];
+        foreach ($pairs as [$i, $j]) {
+            $sql[] = '(text LIKE ? AND text LIKE ?)';
+            $params[] = '%' . $words[$i] . '%';
+            $params[] = '%' . $words[$j] . '%';
+        }
+        $params[] = $limit;
+        $out = [];
+        foreach ($this->run('SELECT translation, book, chapter, verse, text FROM bible WHERE ' . implode(' OR ', $sql)
+            . ' LIMIT ?', $params)->fetchAll(\PDO::FETCH_NUM) as $r) {
+            $out[] = ['translation' => (string) $r[0], 'book' => (int) $r[1], 'chapter' => (int) $r[2],
+                      'verse' => (int) $r[3], 'text' => (string) $r[4]];
+        }
+        return $out;
+    }
+
     /** Last verse number of a chapter in a translation (0 if the translation does not have the chapter). */
     public function bibleLastVerse(string $translation, int $book, int $chapter): int
     {

@@ -1,7 +1,7 @@
 # Security reviews
 
-*Newest first: 14 November 2026 (everything changed since 10 November) and 10 November 2026 (the whole
-connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
+*Newest first: 14 November 2026 (the quotation checker on the website; everything changed since 10 November)
+and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
 
 ## In short
@@ -14,6 +14,37 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 14 November 2026: the quotation checker on the website
+
+The website's [quotation checker](https://christianopenlibrary.org/quote.html) is the first part of the connector
+anyone can use without signing in. Before it went live, a separate review read its code (the new `/check` address,
+its limits, and the page that calls it). **It found 8 issues. All 8 were fixed before release.**
+
+| Issue | Status |
+|---|---|
+| A crafted quotation could keep a check running for 15 seconds, and enough of them at once could tie up the server's workers, slowing the connector for everyone. | **Fixed:** at most 2 checks run at once, each stopped after 12 seconds, so most of the server always stays free; at most 4 gaps ("...") in a quotation. |
+| Per-visitor limits counted each IPv6 address separately, and one connection can have billions of them. | **Fixed:** an IPv6 address counts by its network (/64). |
+| Another website could put the page in a frame with a quotation in the link, making its own visitors run checks. | **Fixed:** inside another site's frame, the page waits for a click. |
+| The checks had no search allowance of their own, so in theory they could use up the shared daily search budget. | **Fixed:** together they count as one person. |
+| Visitor codes could outlast a day if nobody used the checker. | **Fixed:** they are swept with the connector's other counters, every minute. |
+| A short line of a document shown by permission (a name after the matched words) could be returned. | **Fixed:** nothing from those documents is returned but where the words are. |
+| Asterisks in a quotation or in a book's text could be shown as differences. | **Fixed:** differences are marked with characters no text contains. |
+| Links on the page weren't checked before use. | **Fixed:** only web addresses are used. |
+| Another page could open the checker in a new window with a quotation in the link and keep reloading it, using up a visitor's daily checks or everyone's. | **Fixed:** in a window another page opened, the page waits for a click. The server's limits for each visitor cap anything else. |
+| A quotation cut at the length limit in the middle of an emoji left the page stuck on "Searching". | **Fixed.** |
+| The page built a search pattern from the year in the server's answer; a wrong answer could have frozen the page. | **Fixed:** no pattern is built from the answer. |
+| A share link's quotation and name were read again from the box, so a link could ask about something slightly different from what it showed. | **Fixed:** they are used as given. |
+| Every check put the quotation in the address bar, so it went into the browser's history. | **Fixed:** only a share link carries it. |
+| A check could wait a long time if the server stalled. | **Fixed:** the page gives up after 30 seconds. |
+| A share link can put a made-up name in the heading ("Not found in the works of ..."). It cannot change the verdict. | **Accepted:** the name is shown as the link gave it. |
+
+Also fixed: a check that ran out of time could say "not found" without saying it was cut short; the website now
+asks you to try again instead.
+
+Added before release: answers are kept for a day, so a share link opened by many people is checked only once. Each
+is stored encrypted, with a key made from the words checked, so the stored answers can't be read, or even matched to
+a quotation, without the exact words. A kept answer still counts against each visitor's own limit.
 
 ## 14 November 2026: everything changed since 10 November
 

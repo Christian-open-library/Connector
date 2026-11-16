@@ -7,6 +7,7 @@
  *   POST /mcp/<key>   the MCP endpoint with a key in the URL (owner key or a personal link)
  *   GET  /.well-known/oauth-protected-resource[/mcp], /.well-known/oauth-authorization-server
  *   GET  /support.svg?theme=light|dark   the public cost card on the library's front page (Support)
+ *   POST /check       the public quotation checker on the library's website, no sign-in (PublicCheck)
  *
  * Anything else answers 404 {}. The release layout is <release>/www/index.php next to <release>/src/.
  * The config path comes from the LIBRARY_CONFIG environment variable (set in the PHP-FPM pool).
@@ -38,6 +39,23 @@ function col_send(ColLibrary\Response $r, string $method): void
     }
 }
 
+/** @return array<string,string> the request headers, lower-case names with dashes */
+function col_headers(): array
+{
+    $headers = [];
+    foreach ($_SERVER as $name => $value) {
+        if (str_starts_with((string) $name, 'HTTP_')) {
+            $headers[str_replace('_', '-', strtolower(substr((string) $name, 5)))] = (string) $value;
+        }
+    }
+    foreach (['CONTENT_TYPE' => 'content-type', 'CONTENT_LENGTH' => 'content-length'] as $name => $header) {
+        if (isset($_SERVER[$name])) {
+            $headers[$header] = (string) $_SERVER[$name];
+        }
+    }
+    return $headers;
+}
+
 $method = (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET');
 $path = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
 $oauthFile = dirname(__DIR__) . '/oauth.php';
@@ -57,6 +75,16 @@ if ($path === '/support.svg') {
     col_send(ColLibrary\Support::response($method, $_GET, is_array($oauth) ? $oauth : null), $method);
     exit;
 }
+if ($path === '/check' || $path === '/check/') {
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(ColLibrary\Http::TIME_LIMIT);
+    }
+    $body = (string) file_get_contents('php://input', false, null, 0, ColLibrary\PublicCheck::MAX_BODY + 1);
+    // Set by Cloudflare (nginx listens only on 127.0.0.1, for the tunnel), so the caller cannot choose it.
+    $visitor = (string) ($_SERVER['HTTP_CF_CONNECTING_IP'] ?? '');
+    col_send(ColLibrary\PublicCheck::response($method, col_headers(), $body, $visitor), $method);
+    exit;
+}
 $signedIn = is_array($oauth) && ($path === '/mcp' || $path === '/mcp/');
 if (!$signedIn && !preg_match(COL_ROUTE, $path, $m)) {
     col_send(ColLibrary\Response::json(404, '{}'), $method);
@@ -65,17 +93,7 @@ if (!$signedIn && !preg_match(COL_ROUTE, $path, $m)) {
 if (function_exists('set_time_limit')) {
     @set_time_limit(ColLibrary\Http::TIME_LIMIT);
 }
-$headers = [];
-foreach ($_SERVER as $name => $value) {
-    if (str_starts_with((string) $name, 'HTTP_')) {
-        $headers[str_replace('_', '-', strtolower(substr((string) $name, 5)))] = (string) $value;
-    }
-}
-foreach (['CONTENT_TYPE' => 'content-type', 'CONTENT_LENGTH' => 'content-length'] as $name => $header) {
-    if (isset($_SERVER[$name])) {
-        $headers[$header] = (string) $_SERVER[$name];
-    }
-}
+$headers = col_headers();
 // One byte more than the limit is enough for Http::process to refuse an oversized body.
 $body = (string) file_get_contents('php://input', false, null, 0, ColLibrary\Http::MAX_BODY + 1);
 ob_start();

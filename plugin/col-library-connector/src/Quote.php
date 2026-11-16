@@ -47,6 +47,8 @@ final class QuoteResult
         public readonly int $authorWorks,     // works in the library by the credited author (0 when none given)
         public readonly int $phraseWorks,     // works holding the whole quotation as a phrase (capped)
         public readonly array $notes,
+        public readonly array $authorKeys = [],   // the credited name's words matched against authors (Quote::authorKeysFor)
+        public readonly bool $incomplete = false,  // a search step was skipped for lack of time: NOT FOUND is not final
     ) {
     }
 
@@ -55,7 +57,8 @@ final class QuoteResult
     {
         $strip = static fn (?array $m): ?array => $m === null ? null : array_merge($m, ['before' => '', 'after' => '']);
         return new self($this->quote, $this->author, $this->verdict, $strip($this->primary), $this->matches,
-            $strip($this->earliest), $this->authorWorks, $this->phraseWorks, array_merge($this->notes, [$note]));
+            $strip($this->earliest), $this->authorWorks, $this->phraseWorks, array_merge($this->notes, [$note]),
+            $this->authorKeys, $this->incomplete);
     }
 }
 
@@ -130,6 +133,8 @@ final class Quote
     /** @var list<string> id => word (array keys turn "1668" into an integer, so the words are kept here) */
     private array $words = [];
     public array $trace = [];
+    /** A search step was skipped because time ran short (QuoteResult::$incomplete). */
+    private bool $short = false;
 
     public function __construct(
         private readonly Store $store,
@@ -174,7 +179,9 @@ final class Quote
         $phraseIds = [];
         $cands = [];   // id => true, in order of strength
         foreach ($q['segments'] as $seg) {
-            if (count($seg) >= self::MIN_WORDS && $this->phraseSafe($seg) && $this->remaining() > self::MIN_SECONDS) {
+            if (count($seg) >= self::MIN_WORDS && $this->phraseSafe($seg) && $this->remaining() <= self::MIN_SECONDS) {
+                $this->short = true;
+            } elseif (count($seg) >= self::MIN_WORDS && $this->phraseSafe($seg)) {
                 $match = Text::ftsPhrase($seg);
                 try {
                     foreach ($this->store->matchInOrder($match, null, self::PHRASE_IDS, 0) as $id) {
@@ -201,9 +208,13 @@ final class Quote
         $cands += array_fill_keys($windowHits, true);
         if ($this->remaining() > self::MIN_SECONDS) {
             $cands += array_fill_keys($this->nearHits($q['segments'], count($cands) < 5), true);
+        } else {
+            $this->short = true;
         }
         $this->trace['near_ms'] = (int) round((microtime(true) - $t0) * 1000);
-        if ($this->search->vectorProblem() === null && $this->remaining() > self::MIN_SECONDS_EMBED) {
+        if ($this->search->vectorProblem() === null && $this->remaining() <= self::MIN_SECONDS_EMBED) {
+            $notes[] = 'There was no time for the meaning search, so a quotation reworded beyond its key words may be missed.';
+        } elseif ($this->search->vectorProblem() === null) {
             try {
                 $vec = $this->voyage->embedQuery($this->search->modernQuery(str_replace('…', ' ', $quote)), $this->deadline);
                 $vnotes = [];
@@ -249,7 +260,7 @@ final class Quote
                 break;
             }
             if ($this->remaining() < 1.0) {
-                $notes[] = 'The check ran short of time, so not every possible passage was compared.';
+                $this->short = true;
                 break;
             }
             $results[$id] = $this->alignDoc($q, $docs[$id]);
@@ -343,8 +354,15 @@ final class Quote
         if ($earliest !== null && $primary !== null && $earliest['work']['id'] === $primary['work']['id']) {
             $earliest = $primary;
         }
+        if ($primary !== null && ($primary['typos'] ?? []) !== []) {
+            $notes[] = 'Spelling: ' . implode(', ', array_map(static fn (array $t): string => "\"{$t[0]}\" is \"{$t[1]}\"",
+                array_slice($primary['typos'], 0, 4))) . ' in the source.';
+        }
+        if ($this->short) {
+            $notes[] = 'The check ran short of time, so not every possible passage was compared.';
+        }
         return new QuoteResult($quote, $author, $verdict, $primary, $matches, $earliest, $authorWorks, $phraseWorks,
-            $notes);
+            $notes, $authorKeys, $this->short);
     }
 
     /**
@@ -520,7 +538,8 @@ final class Quote
      * Passages holding two pieces of the quotation (Quote::pieces) within $span words of each other, those
      * holding the most pairs first. Two single words, or two pieces that overlap, are not a pair. A pair found
      * in more than PAIR_IDS passages is common wording and is dropped; its query stops there, in id order,
-     * so a common pair costs little. After PAIR_SECONDS the rest are left (the other searches still run).
+     * so a common pair costs little. After PAIR_SECONDS the rest are left (the other searches still run, so
+     * this is not marked as short of time).
      * @param list<list<string>> $segments  @return list<int>
      */
     private function pairHits(array $segments, int $span): array
@@ -535,6 +554,7 @@ final class Quote
                     continue;
                 }
                 if ($this->remaining() < self::MIN_SECONDS) {
+                    $this->short = true;
                     break 2;
                 }
                 if (microtime(true) - $start > self::PAIR_SECONDS) {
@@ -657,6 +677,7 @@ final class Quote
         $score = [];
         foreach ($this->windows($segments) as [$words, $span]) {
             if ($this->remaining() < self::MIN_SECONDS) {
+                $this->short = true;
                 break;
             }
             try {
@@ -863,16 +884,19 @@ final class Quote
     }
 
     /**
-     * In a work that is uncorrected OCR of a scan, a changed word that differs from the quotation's by a letter
-     * or so ("liis" for "his", "tbe" for "the") is most likely a misreading of the scan, not a different word:
-     * it counts as kept, and 'misread' says how many there were.
+     * A changed word that differs from the quotation's by a letter or so. When the book's word is an ordinary word
+     * and the quotation's is not ("kiling" for "killing"), the slip is the quotation's: it counts as kept and is
+     * listed in 'typos'. In a work that is uncorrected OCR of a scan, otherwise ("liis" for "his", "tbe" for
+     * "the"), it is most likely a misreading of the scan: it counts as kept, and 'misread' says how many there were.
      */
     private function allowMisreads(array $r, array $q, array $doc): array
     {
         $r['misread'] = 0;
-        if (!self::fromScan($doc['passages'][0]['work']) || $r['edits'] === 0) {
+        $r['typos'] = [];
+        if ($r['edits'] === 0) {
             return $r;
         }
+        $scan = self::fromScan($doc['passages'][0]['work']);
         $words = $this->words;
         $pairs = [];
         foreach ($r['ops'] as $op) {
@@ -882,15 +906,48 @@ final class Quote
         }
         // "not" for "now", "god" for "good", "sin" for "son": both are ordinary words, so the wording differs;
         // a misreading leaves a non-word ("liis", "tbe").
-        $real = $this->realWords(array_merge(...($pairs === [] ? [[]] : $pairs)));
+        if ($pairs === []) {
+            return $r;
+        }
+        $real = $this->realWords(array_merge(...$pairs));
         foreach ($pairs as [$given, $found]) {
-            if (!(isset($real[$given]) && isset($real[$found]))) {
+            if (!isset($real[$given]) && $this->slip($given, $found)) {
+                $r['typos'][] = [$given, $found];
+            } elseif ($scan && !(isset($real[$given]) && isset($real[$found]))) {
                 $r['misread']++;
             }
         }
-        $r['edits'] -= $r['misread'];
-        $r['same'] += $r['misread'];
+        $kept = $r['misread'] + count($r['typos']);
+        $r['edits'] -= $kept;
+        $r['same'] += $kept;
         return $r;
+    }
+
+    /** @var array<string,int> */
+    private array $countCache = [];
+
+    /**
+     * A slip in the quotation: the book's word is common in the library (100 passages or more) and the quotation's
+     * is at least twenty times rarer ("kiling", "killin" against "killing"). Two common forms ("sinners",
+     * "sinner") are a difference of wording, not a slip.
+     */
+    private function slip(string $given, string $found): bool
+    {
+        $f = $this->passageCount($found);
+        return $f >= 100 && $this->passageCount($given) * 20 <= $f;
+    }
+
+    private function passageCount(string $w): int
+    {
+        if (!isset($this->countCache[$w])) {
+            try {
+                $this->countCache[$w] = preg_match('/^[\p{L}\p{N}]+$/u', $w) === 1
+                    ? $this->store->countMatches('"' . $w . '"', null, 2000) : 0;
+            } catch (\PDOException $e) {
+                $this->countCache[$w] = 0;
+            }
+        }
+        return $this->countCache[$w];
     }
 
     /** @var array<string,bool> */
@@ -1041,6 +1098,10 @@ final class Quote
         }
         $libMarked = self::marked($joined, $tokens, $shift, $r['from'], $r['to'], $mark);
         $quoteMarked = self::markedQuote($quote, $q['tokens'], $mine);
+        // The same with marks no text contains (U+E000 before a differing word, U+E001 after), for the website, which
+        // must not take the library's own Markdown ** or the caller's for a difference (PublicCheck::segments).
+        $libSpans = self::marked($joined, $tokens, $shift, $r['from'], $r['to'], $mark, self::MARK_OPEN, self::MARK_CLOSE);
+        $quoteSpans = self::markedQuote($quote, $q['tokens'], $mine, self::MARK_OPEN, self::MARK_CLOSE);
         $edits = [];
         foreach (self::groupChanges($r['ops']) as $c) {
             $lib = implode(' ', array_map(static fn (int $j): string => self::word($joined, $tokens[$j], $shift), $c['lib']));
@@ -1055,6 +1116,7 @@ final class Quote
             'page_end' => $last['page'],
             'edits' => $r['edits'],
             'misread' => $r['misread'] ?? 0,
+            'typos' => $r['typos'] ?? [],
             'thin_pieces' => count($q['segments']) > 1
                 && min(array_map('count', $q['segments'])) < self::PIECE_WORDS,
             'same' => $r['same'],
@@ -1066,6 +1128,8 @@ final class Quote
             'credit' => $credit,
             'lib_marked' => $libMarked,
             'quote_marked' => $quoteMarked,
+            'lib_spans' => $libSpans,
+            'quote_spans' => $quoteSpans,
             'changes' => $edits,
             'when' => self::when($work),
         ];
@@ -1180,7 +1244,11 @@ final class Quote
     }
 
     /** The library's stretch with the words that differ in **bold**. */
-    private static function marked(string $joined, array $tokens, array $shift, int $from, int $to, array $mark): string
+    public const MARK_OPEN = "\u{E000}";
+    public const MARK_CLOSE = "\u{E001}";
+
+    private static function marked(string $joined, array $tokens, array $shift, int $from, int $to, array $mark,
+                                   string $open = '**', string $close = '**'): string
     {
         $out = '';
         $pos = $shift[$tokens[$from]['p']] + $tokens[$from]['off'];
@@ -1192,14 +1260,15 @@ final class Quote
             }
             $out .= substr($joined, $pos, $a - $pos);
             $w = substr($joined, $a, $t['len']);
-            $out .= isset($mark[$j]) ? "**$w**" : $w;
+            $out .= isset($mark[$j]) ? $open . $w . $close : $w;
             $pos = $a + $t['len'];
         }
         return $out;
     }
 
     /** The quotation with its words that differ in **bold**. */
-    private static function markedQuote(string $quote, array $tokens, array $mark): string
+    private static function markedQuote(string $quote, array $tokens, array $mark, string $open = '**',
+                                        string $close = '**'): string
     {
         $out = '';
         $pos = 0;
@@ -1209,7 +1278,7 @@ final class Quote
             }
             $out .= substr($quote, $pos, $t['off'] - $pos);
             $w = substr($quote, $t['off'], $t['len']);
-            $out .= isset($mark[$i]) ? "**$w**" : $w;
+            $out .= isset($mark[$i]) ? $open . $w . $close : $w;
             $pos = $t['off'] + $t['len'];
         }
         return $out . substr($quote, $pos);
@@ -1407,7 +1476,7 @@ final class Quote
                 $tries[] = [$words[0], $words[count($words) - 1]];
             }
         }
-        if (count($tries) === 1 || $all === []) {
+        if ($all === []) {
             return $all;
         }
         $works = is_array($works) ? $works : iterator_to_array($works, false);
@@ -1418,7 +1487,50 @@ final class Quote
                 }
             }
         }
-        return $all;
+        return self::misspelt($all, $works) ?? $all;
+    }
+
+    /**
+     * A name that matches no writer at all may be misspelt ("Augustin", "Spurgen"): the name of the writer with the
+     * most works whose name words are each the same or one letter off (two in a long word), same first letter.
+     * Words under five letters must be exact. @param list<string> $all @param list<array> $works
+     * @return list<string>|null
+     */
+    public static function misspelt(array $all, array $works): ?array
+    {
+        $count = [];
+        foreach ($works as $w) {
+            $have = array_values(array_unique(array_filter(explode(' ', Text::looseKey($w['author'] . ' '
+                . str_replace('-', ' ', $w['author_slug']))), 'strlen')));
+            $got = [];
+            foreach ($all as $k) {
+                $best = null;
+                foreach ($have as $h) {
+                    if ($h === $k) {
+                        $best = $h;
+                        break;
+                    }
+                    $len = strlen($k);
+                    if ($best === null && $len >= 5 && $h[0] === $k[0] && abs(strlen($h) - $len) <= 2
+                        && levenshtein($h, $k) <= ($len >= 8 ? 2 : 1)) {
+                        $best = $h;
+                    }
+                }
+                if ($best === null) {
+                    continue 2;
+                }
+                $got[] = $best;
+            }
+            if ($got !== $all) {
+                $key = implode(' ', $got);
+                $count[$key] = ($count[$key] ?? 0) + 1;
+            }
+        }
+        if ($count === []) {
+            return null;
+        }
+        arsort($count);
+        return explode(' ', (string) array_key_first($count));
     }
 
     /**

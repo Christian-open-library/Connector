@@ -5,12 +5,15 @@ so it never appears on a command line or in output.
     python3 -I deploy/smoke.py URL_FILE [EXPECTED_REVISION]
 
 Checks initialize (and serverInfo.version ending in +EXPECTED_REVISION if given), tools/list, a meaning
-search, an exact search, read_passage on the first result, find_works and read_scripture. Exit 0 if all pass.
+search, an exact search, read_passage on the first result, find_works, read_scripture, check_quote, and the website's
+public quotation checker (POST /check: an answer for the website's Origin, 403 for another). Exit 0 if all pass.
 """
 import json
 import re
 import sys
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 
 PROTOCOL = '2025-11-25'
@@ -22,6 +25,20 @@ def call(url, body, timeout=120):
         'MCP-Protocol-Version': PROTOCOL, 'User-Agent': 'col-deploy-smoke/1.0'})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.status, json.loads(r.read().decode())
+
+
+def public_check(base, origin, body):
+    """POST /check as the website's page does: (status, JSON answer or {})."""
+    req = urllib.request.Request(base + '/check', data=json.dumps(body).encode(), method='POST', headers={
+        'Content-Type': 'text/plain;charset=UTF-8', 'Origin': origin, 'User-Agent': 'col-deploy-smoke/1.0'})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.status, json.loads(r.read().decode()), r.headers.get('Access-Control-Allow-Origin')
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode()), e.headers.get('Access-Control-Allow-Origin')
+        except ValueError:
+            return e.code, {}, None
 
 
 def text(reply):
@@ -88,6 +105,14 @@ def main():
                           'quote': 'Be killing sin, or it will be killing you', 'author': 'Spurgeon'}}})
     check('check_quote', 'FOUND, BUT NOT BY Spurgeon' in text(r) and 'John Owen' in text(r),
           text(r).split('\n', 2)[1][:90] if text(r).count('\n') else text(r)[:90])
+    u = urllib.parse.urlsplit(url)
+    base = f'{u.scheme}://{u.netloc}'
+    site = 'https://christianopenlibrary.org'
+    code, d, acao = public_check(base, site, {'quote': 'Be killing sin, or it will be killing you', 'author': 'John Owen'})
+    check('public check', code == 200 and d.get('verdict') == 'exact' and acao == site
+          and (d.get('primary') or {}).get('author') == 'John Owen', f"{code} {d.get('verdict') or d.get('error', '')}"[:90])
+    code, d, acao = public_check(base, 'https://example.com', {'quote': 'Be killing sin, or it will be killing you'})
+    check('public check, other site', code == 403 and acao is None, str(code))
     print(f'smoke test: {passed} of {total} passed')
     return 0 if passed == total else 1
 

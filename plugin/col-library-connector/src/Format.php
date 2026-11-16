@@ -465,7 +465,7 @@ final class Format
         $where = self::quoteWhere($p);
         $credit = $p['credit'] !== null ? self::field($p['credit'], 80) : null;
         if ($r->verdict === QuoteResult::OTHER_AUTHOR && $credit !== null
-            && Quote::byAuthor($p['work'], Quote::authorWords((string) $r->author))) {
+            && Quote::byAuthor($p['work'], $r->authorKeys)) {
             $lines[] = "FOUND, BUT BY SOMEONE ELSE: the words are in $where, but there $who is quoting $credit: a credit "
                 . "line, \"— $credit\", follows them. Tell the user the words are $credit's as quoted by $who"
                 . ($p['edits'] > 0 || $p['misread'] > 0 ? ' (worded a little differently; see below)' : '') . '.';
@@ -679,16 +679,27 @@ final class Format
      */
     private static function pageLinkLine(array $w, ?string $pageStart, string $text = ''): string
     {
+        $link = self::scanLink($w, $pageStart, $text);
+        return $link === null ? '' : "\n" . ($link['kind'] === 'page' ? 'Scan page' : 'Find on scan') . ': ' . $link['url'];
+    }
+
+    /**
+     * The scan address behind pageLinkLine: ['kind' => 'page'|'find', 'url' => ...], or null when the work is not
+     * from an Internet Archive scan (or a "find" link would have no words to look for).
+     * @return array{kind: string, url: string}|null
+     */
+    public static function scanLink(array $w, ?string $pageStart, string $text = ''): ?array
+    {
         $id = self::archiveId((string) ($w['source_url'] ?? ''));
         if ($id === null) {
-            return '';
+            return null;
         }
         $phrase = self::scanPhrase($text);
         $q = $phrase === '' ? '' : '?q=' . rawurlencode('"' . $phrase . '"');
         if ($pageStart !== null && preg_match('/^[1-9][0-9]{0,4}$/', trim($pageStart))) {
-            return "\nScan page: https://archive.org/details/$id/page/" . trim($pageStart) . '/mode/1up' . $q;
+            return ['kind' => 'page', 'url' => "https://archive.org/details/$id/page/" . trim($pageStart) . '/mode/1up' . $q];
         }
-        return $q === '' ? '' : "\nFind on scan: https://archive.org/details/$id$q";
+        return $q === '' ? null : ['kind' => 'find', 'url' => "https://archive.org/details/$id$q"];
     }
 
     /**
