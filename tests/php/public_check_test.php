@@ -120,6 +120,9 @@ function test_bible_verses_are_named_first(): void
     $d = data(post(['quote' => 'For God so loved the world, Caesar']));
     assert_same('John 3:16', $d['bible']['ref'] ?? null, 'one stray uncommon word still finds the verse');
     assert_same([6, 7], [$d['bible']['same'], $d['bible']['words']]);
+    $d = data(post(['quote' => 'For God so loved the world, that he sent his child']));
+    assert_same(['John 3:16', true], [$d['bible']['ref'] ?? null, $d['bible']['near'] ?? null],
+        'most of the quotation a run of the verse: the verse in another translation');
     $d = data(post(['quote' => 'For God so loved Caesar and the world']));
     assert_same(null, $d['bible'], 'in a short quotation, not with the verse\'s words scattered');
     $d = data(post(['quote' => 'Caesar so loved the empire of Rome']));

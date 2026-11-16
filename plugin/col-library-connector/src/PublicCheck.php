@@ -419,17 +419,23 @@ final class PublicCheck
             }
             $have = self::bibleWords($v['text']);
             $rareIn = count(array_intersect($rare, $have));
-            if ($rareIn < $needRare) {
-                continue;
-            }
-            // In a short quotation an uncommon word may be missing only if the rest is one phrase of the verse
-            // ("I am the bread of life, Caesar"), not words scattered through it ("I believe in order to understand").
-            if ($n < 8 && $rareIn < count($rare) && !self::phraseLessOne($words, $have)) {
-                continue;
+            // A run of 5 words or more of the verse, most of the quotation, is the verse in another translation
+            // ("The Lord is my shepherd, I lack nothing"), whatever its other words.
+            $run = self::longestRun($words, $have);
+            $long = $run >= 5 && $run >= 0.6 * $n;
+            if (!$long) {
+                if ($rareIn < $needRare) {
+                    continue;
+                }
+                // In a short quotation an uncommon word may be missing only if the rest is one phrase of the verse
+                // ("I am the bread of life, Caesar"), not words scattered through it ("I believe in order to understand").
+                if ($n < 8 && $rareIn < count($rare) && !self::phraseLessOne($words, $have)) {
+                    continue;
+                }
             }
             $same = self::inOrder($words, $have);
             $rank = [-$same, $order[$v['translation']], $v['book'], $v['chapter'], $v['verse']];
-            if ($same >= $need && ($best === null || $rank < $best[0])) {
+            if (($same >= $need || $long) && ($best === null || $rank < $best[0])) {
                 $best = [$rank, $v, $same];
             }
         }
@@ -477,6 +483,22 @@ final class PublicCheck
             $from = $end;
         }
         return true;
+    }
+
+    /** The most words in a row $a and $b have in common. */
+    private static function longestRun(array $a, array $b): int
+    {
+        $best = 0;
+        $prev = array_fill(0, count($b) + 1, 0);
+        foreach ($a as $x) {
+            $row = [0];
+            foreach ($b as $j => $y) {
+                $row[] = $x === $y ? $prev[$j] + 1 : 0;
+                $best = max($best, $row[$j + 1]);
+            }
+            $prev = $row;
+        }
+        return $best;
     }
 
     /** Whether $words, less one of them, are one phrase of $have. */
