@@ -46,6 +46,10 @@ Added before release: answers are kept for a day, so a share link opened by many
 is stored encrypted, with a key made from the words checked, so the stored answers can't be read, or even matched to
 a quotation, without the exact words. A kept answer still counts against each visitor's own limit.
 
+Changed 16 November: kept answers are now tied to the code release, so a new release starts with none and can't
+show an answer worked out by older code. A release also stops if any test fails, and after each one the live checker
+is tried on quotations whose right answers are known.
+
 ## 14 November 2026: everything changed since 10 November
 
 A second review, by the same method, covered everything changed between 10 and 14 November: holding back
