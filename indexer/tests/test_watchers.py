@@ -199,7 +199,7 @@ class Watchers(unittest.TestCase):
             low = text.lower()
             for bad in ('ask first', 'let me know', 'happy to discuss', 'exception for you', 'permission'):
                 self.assertNotIn(bad, low, text)
-            self.assertIn("don't make exceptions", text)
+            self.assertIn("not licensing the collection", text)
             self.assertIn('download.html#reuse', text)
         self.assertNotIn('invit', rr.github(False))
         self.assertTrue(rr.email('').startswith('Hello,'))
