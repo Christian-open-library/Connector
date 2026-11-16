@@ -9,6 +9,8 @@ connector (oauth.php members_only false) except blocked accounts; the member lis
     python3 -I deploy/members.py block LOGIN    block a GitHub account or an email address (then: deploy/deploy-office.sh members)
     python3 -I deploy/members.py unblock LOGIN  (LOGIN: a GitHub login or an email address)
 
+Second accounts are blocked automatically by deploy/dupes.py where it is present (it is not published).
+
 The WorkOS API key stays on homebox (~/.config/library-connector/workos.key); GitHub membership comes
 from the gh CLI (Matt's login). The office server only ever receives the list of WorkOS user ids.
 deploy/deploy-office.sh members sends it; the nightly update does that every night.
@@ -22,6 +24,8 @@ import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # dupes.py (python3 -I leaves the script folder out)
 
 ORG = 'Christian-open-library'
 CONF = Path.home() / '.config' / 'library-connector'
@@ -87,11 +91,39 @@ def blocked_ids():
     return ids, emails
 
 
+def _with_ids():
+    """Every WorkOS user with its GitHub ids, and the org members (one pass over the sign-in service)."""
+    members = org_members()
+    return members, [(u, github_ids(u['id'])) for u in users()]
+
+
+def _rows(members, accounts):
+    return [(u.get('email') or '', u.get('created_at') or '', bool(u.get('last_sign_in_at')),
+             any(g in members for g in gids)) for u, gids in accounts]
+
+
+def _dupes():
+    """deploy/dupes.py (second accounts), or None where it is not present: it is kept out of the public copy,
+    because the rule it applies would be easy to get around once read."""
+    try:
+        import dupes
+    except ModuleNotFoundError:
+        return None
+    return dupes
+
+
+def dupe_rows():
+    """Rows for dupes.py dry-run."""
+    return _rows(*_with_ids())
+
+
 def compute():
-    members, (blocked, blocked_emails) = org_members(), blocked_ids()
+    members, accounts = _with_ids()
+    if (dupes := _dupes()) is not None:
+        dupes.check(_rows(members, accounts))  # blocks new second accounts before the list is made
+    blocked, blocked_emails = blocked_ids()
     allowed, others, banned = [], [], []
-    for u in users():
-        gids = github_ids(u['id'])
+    for u, gids in accounts:
         logins = sorted(members[g] for g in gids if g in members)
         row = (u['id'], logins[0] if logins else '', u.get('email') or '')
         if gids & blocked or (u.get('email') or '').lower() in blocked_emails:
@@ -167,6 +199,8 @@ def main():
             names = sorted({n for n in names if key(n) != login.lower()} | {entry})
         else:
             names = [n for n in names if key(n) != login.lower()]
+            if '@' in login and (dupes := _dupes()) is not None:
+                dupes.forget(login)            # an unblocked second account stays unblocked
         BLOCKED.write_text(''.join(n + '\n' for n in names))
         BLOCKED.chmod(0o600)
         print(f'{cmd}ed {login}; now run: deploy/deploy-office.sh members')

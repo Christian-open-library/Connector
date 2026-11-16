@@ -10,7 +10,7 @@ Anthropic's AI; none was an outside audit.*
   library or run code on the server.
 - **Every issue found is fixed and live,** except two from 10 November that are partly fixed, with the
   remaining risk accepted (both are about a free, open service's shared daily limits; spending can't run away).
-- **What the connector holds:** public-domain books, and a few documents shown by permission of the church
+- **What the connector holds:** public-domain books, and some documents shown by permission of the church
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
