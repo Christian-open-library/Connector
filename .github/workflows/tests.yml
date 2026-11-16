@@ -1,0 +1,36 @@
+# Runs the tests on every push and pull request. deploy/deploy-office.sh release also runs the PHP tests and refuses
+# to release if one fails; this catches a failure as soon as it is pushed.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: PHP 8.3 with the extensions the connector uses
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q php8.3-cli php8.3-intl php8.3-mbstring php8.3-sqlite3 php8.3-curl
+          php -v
+          php -r 'foreach (["intl", "mbstring", "pdo_sqlite", "openssl", "curl"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR, "missing $e\n"); exit(1); } }'
+      - name: PHP tests
+        run: php tests/php/run.php
+
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Indexer tests
+        run: |
+          python -m pip install -q numpy PyYAML requests
+          python -m unittest discover -s indexer/tests -t .

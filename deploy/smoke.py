@@ -6,7 +6,9 @@ so it never appears on a command line or in output.
 
 Checks initialize (and serverInfo.version ending in +EXPECTED_REVISION if given), tools/list, a meaning
 search, an exact search, read_passage on the first result, find_works, read_scripture, check_quote, and the website's
-public quotation checker (POST /check: an answer for the website's Origin, 403 for another). Exit 0 if all pass.
+public quotation checker (POST /check: an answer for the website's Origin, 403 for another), with KNOWN_QUOTES: quotations
+whose right answer was confirmed against the library by hand, so a release that gets one wrong fails here. Exit 0 if all
+pass.
 """
 import json
 import re
@@ -18,6 +20,36 @@ import urllib.request
 
 PROTOCOL = '2025-11-25'
 
+# The website's checker, run as visitors run it: (what it checks, the body sent, the verdict it must give, the author
+# of the work it must cite or None). Each answer was confirmed by hand against the library (16 November 2026). Keep
+# each one to a result that new books cannot change, and add a line whenever a wrong answer is fixed. The visitor limit
+# is 6 a minute, so they are spaced (CHECK_GAP); with these 9 the smoke test takes about 1½ minutes longer.
+KNOWN_QUOTES = [
+    ('word for word (share link: no comma)',
+     {'quote': 'Be killing sin or it will be killing you', 'author': 'John Owen'}, 'exact', 'John Owen'),
+    ('word for word (punctuation ignored)',
+     {'quote': 'Be killing sin, or it will be killing you.', 'author': 'John Owen'}, 'exact', 'John Owen'),
+    ('worded differently',
+     {'quote': 'Thou hast made us for thyself, and our hearts are restless until they rest in thee',
+      'author': 'Augustine'}, 'reworded', 'Augustine'),
+    ('worded differently (two words left out)',
+     {'quote': 'Resolved, never to lose one moment of time; but improve it the most profitable way I possibly can',
+      'author': 'Jonathan Edwards'}, 'reworded', 'Jonathan Edwards'),
+    ('by someone else',
+     {'quote': 'Be killing sin, or it will be killing you', 'author': 'Spurgeon'}, 'other_author', 'John Owen'),
+    ('not by the credited author (misattributed)',
+     {'quote': 'A lie can travel halfway around the world while the truth is putting on its shoes',
+      'author': 'Spurgeon'}, 'other_author', None),
+    ('not found',
+     {'quote': 'Defend the Bible? I would as soon defend a lion. Just turn the Bible loose; it will defend itself.',
+      'author': 'Spurgeon'}, 'not_found', None),
+    ('not found (misattributed)',
+     {'quote': 'Preach the gospel at all times; when necessary, use words', 'author': 'Francis of Assisi'},
+     'not_found', None),
+]
+BIBLE_QUOTE = {'quote': 'For God so loved the world, that he gave his only begotten Son'}   # John 3:16, KJV
+CHECK_GAP = 11   # seconds between checks: under the website's limit of 6 a minute for one visitor
+
 
 def call(url, body, timeout=120):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method='POST', headers={
@@ -28,7 +60,16 @@ def call(url, body, timeout=120):
 
 
 def public_check(base, origin, body):
-    """POST /check as the website's page does: (status, JSON answer or {})."""
+    """POST /check as the website's page does: (status, JSON answer or {}, CORS origin). Waits out one 429."""
+    for attempt in range(2):
+        code, d, acao = public_check_once(base, origin, body)
+        if code != 429 or attempt:
+            return code, d, acao
+        time.sleep(15)   # the visitor's minute is mostly over by then
+    return code, d, acao
+
+
+def public_check_once(base, origin, body):
     req = urllib.request.Request(base + '/check', data=json.dumps(body).encode(), method='POST', headers={
         'Content-Type': 'text/plain;charset=UTF-8', 'Origin': origin, 'User-Agent': 'col-deploy-smoke/1.0'})
     try:
@@ -113,6 +154,19 @@ def main():
           and (d.get('primary') or {}).get('author') == 'John Owen', f"{code} {d.get('verdict') or d.get('error', '')}"[:90])
     code, d, acao = public_check(base, 'https://example.com', {'quote': 'Be killing sin, or it will be killing you'})
     check('public check, other site', code == 403 and acao is None, str(code))
+    for name, body, verdict, author in KNOWN_QUOTES:
+        time.sleep(CHECK_GAP)
+        code, d, _ = public_check(base, site, body)
+        cited = (d.get('primary') or {}).get('author')
+        check(f'known quote, {name}', code == 200 and d.get('verdict') == verdict
+              and (author is None or cited == author),
+              f"{code} {d.get('verdict') or d.get('error', '')} (want {verdict}){', cites ' + str(cited) if author else ''}"[:110])
+    time.sleep(CHECK_GAP)
+    code, d, _ = public_check(base, site, BIBLE_QUOTE)
+    b = d.get('bible') or {}
+    check('known quote, Bible verse', code == 200 and b.get('ref') == 'John 3:16'
+          and b.get('translation') == 'King James Version' and b.get('near') is False,
+          f"{code} {b.get('ref') or d.get('error', 'no verse')} {b.get('translation', '')}"[:110])
     print(f'smoke test: {passed} of {total} passed')
     return 0 if passed == total else 1
 

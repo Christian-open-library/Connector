@@ -58,6 +58,7 @@ A 75-question test checks whether the right book comes back. Today about 87% of 
 
 - PHP: run `tools/setup.sh` once (it downloads Node and php-wasm into `tools/`), then `tools/php tests/php/run.php`.
 - Python: create a virtual environment with numpy, PyYAML and requests, then run `python -m unittest discover -s indexer/tests -t .`.
+- Both run on GitHub on every push (`.github/workflows/tests.yml`), and `deploy/deploy-office.sh release` runs the PHP tests and releases nothing if one fails. After each deploy, `deploy/smoke.py` checks quotations with known answers on the live website checker (`KNOWN_QUOTES`); add one whenever a wrong answer is fixed.
 
 ## License
 

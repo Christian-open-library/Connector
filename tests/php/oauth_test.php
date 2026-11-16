@@ -263,6 +263,7 @@ function test_member_list(): void
     assert_false($o->isMember('user_01OTHERxxxxxxxxxxxxxxxxx'));
     file_put_contents("$dir/members.json", '{"members": ');
     touch("$dir/members.json", time() + 5);
+    clearstatcache();   // native PHP keeps the old time within one run; each server request starts with none
     assert_false($o->isMember(SUB), 'a broken list lets nobody in');
     $p = $o->principal(SUB);
     assert_same('u' . substr(hash('sha256', SUB), 0, 12), $p['id']);
