@@ -316,9 +316,67 @@ final class Format
      */
     /** Latin and Greek editions, whose Psalm numbers are the Vulgate's (indexer.references.VULGATE_TITLE_RE) */
     private const VULGATE_TITLE = '/\((?:Latin|Greek)(?:\)|,| translation\b| version\b)/';
-    public const VULGATE_PSALMS_NOTE = 'The Latin and Greek editions number the Psalms as the Vulgate and Septuagint '
-        . 'do, counting the heading as a verse; their citations are listed here by the KJV\'s numbers (their '
-        . '"Ps 118:69" is Psalm 119:69). Where the verse is uncertain, only the psalm is listed.';
+    /** English works that number the Psalms as the Douay-Rheims does, [author, title] (indexer.references.DOUAY_WORKS) */
+    public const DOUAY_WORKS = [
+        ['Alphonsus Liguori', 'Dignity and Duties of the Priest or Selva, Volume 12 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'],
+        ['Alphonsus Liguori', 'Preparation for Death, or Considerations on the Eternal Maxims (1854)'],
+        ['Alphonsus Liguori', 'The Divine Office, Volume 14 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'],
+        ['Alphonsus Liguori', 'The Holy Eucharist, Volume 6 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'],
+        ['Alphonsus Liguori', 'The Holy Mass, Volume 13 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'],
+        ['Alphonsus Liguori', 'The Incarnation, Birth and Infancy of Jesus Christ, Volume 4 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'],
+        ['Alphonsus Liguori', 'The True Spouse of Jesus Christ, Volume 10 (Part 1) (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'],
+        ['Anselm', 'St. Anselm\'s Book of Meditations and Prayers'],
+        ['Bonaventure', 'A Franciscan View of the Spiritual and Religious Life, tr. Dominic Devas (1922)'],
+        ['Francis de Sales', 'Letters to Persons in Religion (Library of St. Francis de Sales, tr. H. B. Mackey)'],
+        ['Francis de Sales', 'Letters to Persons in the World (Library of St. Francis de Sales, tr. H. B. Mackey)'],
+        ['Francis de Sales', 'The Catholic Controversy (Library of St. Francis de Sales, tr. H. B. Mackey, 3rd ed.)'],
+        ['Francis de Sales', 'The Spiritual Conferences (Library of St. Francis de Sales, 1906 imprimatur)'],
+        ['Francis de Sales', 'Treatise on the Love of God'],
+        ['Francis of Assisi', 'The Writings of Saint Francis of Assisi, tr. Paschal Robinson (1906)'],
+        ['Gertrude the Great', 'The Life and Revelations of Saint Gertrude (1870)'],
+        ['Giovanni da Parma', 'The Lady Poverty - A XIII. Century Allegory, tr. Montgomery Carmichael (1901)'],
+        ['Girolamo Savonarola', 'The Triumph of the Cross, tr. John Procter (1901)'],
+        ['Gregory the Great', 'Selected Epistles, Part II'],
+        ['Gregory the Great', 'The Book of Pastoral Rule and Selected Epistles'],
+        ['Hugh of St. Victor', 'Explanation of the Rule of St. Augustine, tr. Aloysius Smith (1911)'],
+        ['John Tauler', 'The Sermons and Conferences of John Tauler, tr. Walter Elliott (1910)'],
+        ['John of the Cross', 'The Complete Works, Volume 2 (tr. David Lewis, 1864)'],
+        ['John of the Cross', 'The Living Flame of Love, with his Letters, Poems and Minor Writings (tr. David Lewis, ed. Benedict Zimmerman)'],
+        ['Joseph Wilhelm and Thomas B. Scannell', 'A Manual of Catholic Theology Based on Scheeben\'s Dogmatik, Volume 1'],
+        ['Joseph Wilhelm and Thomas B. Scannell', 'A Manual of Catholic Theology Based on Scheeben\'s Dogmatik, Volume 2'],
+        ['Matthias Joseph Scheeben', 'The Glories of Divine Grace, a Free Rendering of the Original Treatise'],
+        ['N. Orloff', 'The Octoechos, or the Book of Eight Tones, a Primer containing the Sunday Service in the Eight Tones (1898)'],
+        ['Optatus', 'The Work of St. Optatus against the Donatists (Vassall-Phillips 1917)'],
+        ['Origen', 'Commentary on Matthew, books 10-17 (Klostermann 1935-37)'],
+        ['Richard Challoner', 'Considerations upon Christian Truths and Christian Duties, Meditations for Every Day in the Year'],
+        ['Richard Challoner', 'The Lives of the Fathers of the Eastern Deserts (Sadlier 1863)'],
+        ['Roman Catholic Church', 'Catechism of the Council of Trent for Parish Priests (McHugh and Callan 1923)'],
+        ['Severus of Antioch', 'The Sixth Book of the Select Letters of Severus, Volume 2, Translation, Part 2 (Brooks 1904)'],
+        ['Teresa of Avila', 'The Life of St. Teresa of Jesus'],
+        ['Thomas Aquinas', 'Aquinas Ethicus - The Moral Teaching of St. Thomas, Volume 2, tr. Joseph Rickaby (1892)'],
+        ['Thomas Aquinas', 'Of God and His Creatures'],
+        ['Thomas Aquinas', 'On Prayer and the Contemplative Life'],
+        ['Thomas Aquinas', 'Summa Contra Gentiles, Book III, tr. English Dominican Fathers (1928)'],
+        ['Thomas Aquinas', 'Summa Contra Gentiles, Book IV, tr. English Dominican Fathers (1929)'],
+        ['Thomas Aquinas', 'Summa Theologica, Part I'],
+        ['Thomas Aquinas', 'Summa Theologica, Part I-II (Pars Prima Secundae) From the Complete American Edition'],
+        ['Thomas Aquinas', 'Summa Theologica, Part II-II (Secunda Secundae) Translated by Fathers of the'],
+        ['Thomas Aquinas', 'Summa Theologica, Part III (Tertia Pars) From the Complete American Edition'],
+        ['Thomas Aquinas', 'Summa Theologica, Third Part (Supplement) QQ. 87-99 and Appendices, tr. English Dominican Fathers (1922)'],
+        ['Thomas a Kempis', 'A Meditation on the Incarnation of Christ and Sermons on the Life and Passion of Our Lord, tr. Vincent Scully (1907)'],
+        ['Thomas a Kempis', 'Sermons to the Novices Regular, tr. Vincent Scully (1907)'],
+    ];
+    public const VULGATE_PSALMS_NOTE = 'The Latin and Greek editions, and some Catholic works in English that follow the '
+        . 'Douay-Rheims, number the Psalms as the Vulgate and Septuagint do, counting the heading as a verse; their '
+        . 'citations are listed here by the KJV\'s numbers (their "Ps 118:69" is Psalm 119:69). Where the verse is '
+        . 'uncertain, only the psalm is listed.';
+
+    /** Whether a work's Psalm numbers are the Vulgate's (indexer.references.vulgate_work_ids) */
+    public static function vulgatePsalms(array $work): bool
+    {
+        return preg_match(self::VULGATE_TITLE, $work['title'] ?? '') === 1
+            || in_array([$work['author'] ?? '', $work['title'] ?? ''], self::DOUAY_WORKS, true);
+    }
 
     public static function citations(CitationResult $r): string
     {
@@ -362,7 +420,7 @@ final class Format
         }
         $notes = $r->notes;
         if (preg_match('/^Psalms? /', $r->label) === 1 && array_filter($r->hits,
-                static fn (array $p): bool => preg_match(self::VULGATE_TITLE, $p['work']['title'] ?? '') === 1)) {
+                static fn (array $p): bool => self::vulgatePsalms($p['work']))) {
             $notes[] = self::VULGATE_PSALMS_NOTE;
         }
         if ($last < $r->passages) {

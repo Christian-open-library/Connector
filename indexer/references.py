@@ -280,8 +280,69 @@ def no_citation_work_ids(db: sqlite3.Connection) -> set:
 VULGATE_TITLE_RE = re.compile(r'\((?:Latin|Greek)(?:\)|,| translation\b| version\b)')
 
 
+# English works whose Psalm citations follow the Douay-Rheims (the Vulgate's numbers, the heading counted as a
+# verse), by (author, title); kept the same as Format::DOUAY_WORKS in the plugin. Measured 2026-11-17 over every
+# English work: for each "Ps" reference to Psalms 10-146 the words around it were compared with the Douay-Rheims
+# and the KJV verse of that number (1,016 matched the Douay, 58,126 the KJV), and references only one numbering
+# allows were counted ("Ps 118" past verse 29 or "Ps 9" past 20 against "Ps 119" past 8 or "Ps 10" past 8).
+# Listed: works with at least 3 Douay signs and 5 times as many as KJV ones (most have none). Per work, not per
+# author: Aquinas's Catena Aurea (Newman's translation) uses the KJV's numbers. Left out: the Catholic
+# Encyclopedia, which often gives both ("Ps. cxliv (cxlv)"). Origen's Commentary on Matthew is Klostermann's
+# Greek text, untitled as such.
+DOUAY_WORKS = frozenset({
+    ('Alphonsus Liguori', 'Dignity and Duties of the Priest or Selva, Volume 12 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'),
+    ('Alphonsus Liguori', 'Preparation for Death, or Considerations on the Eternal Maxims (1854)'),
+    ('Alphonsus Liguori', 'The Divine Office, Volume 14 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'),
+    ('Alphonsus Liguori', 'The Holy Eucharist, Volume 6 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'),
+    ('Alphonsus Liguori', 'The Holy Mass, Volume 13 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'),
+    ('Alphonsus Liguori', 'The Incarnation, Birth and Infancy of Jesus Christ, Volume 4 (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'),
+    ('Alphonsus Liguori', 'The True Spouse of Jesus Christ, Volume 10 (Part 1) (Complete Ascetical Works, Centenary Edition, ed. Eugene Grimm)'),
+    ('Anselm', "St. Anselm's Book of Meditations and Prayers"),
+    ('Bonaventure', 'A Franciscan View of the Spiritual and Religious Life, tr. Dominic Devas (1922)'),
+    ('Francis de Sales', 'Letters to Persons in Religion (Library of St. Francis de Sales, tr. H. B. Mackey)'),
+    ('Francis de Sales', 'Letters to Persons in the World (Library of St. Francis de Sales, tr. H. B. Mackey)'),
+    ('Francis de Sales', 'The Catholic Controversy (Library of St. Francis de Sales, tr. H. B. Mackey, 3rd ed.)'),
+    ('Francis de Sales', 'The Spiritual Conferences (Library of St. Francis de Sales, 1906 imprimatur)'),
+    ('Francis de Sales', 'Treatise on the Love of God'),
+    ('Francis of Assisi', 'The Writings of Saint Francis of Assisi, tr. Paschal Robinson (1906)'),
+    ('Gertrude the Great', 'The Life and Revelations of Saint Gertrude (1870)'),
+    ('Giovanni da Parma', 'The Lady Poverty - A XIII. Century Allegory, tr. Montgomery Carmichael (1901)'),
+    ('Girolamo Savonarola', 'The Triumph of the Cross, tr. John Procter (1901)'),
+    ('Gregory the Great', 'Selected Epistles, Part II'),
+    ('Gregory the Great', 'The Book of Pastoral Rule and Selected Epistles'),
+    ('Hugh of St. Victor', 'Explanation of the Rule of St. Augustine, tr. Aloysius Smith (1911)'),
+    ('John Tauler', 'The Sermons and Conferences of John Tauler, tr. Walter Elliott (1910)'),
+    ('John of the Cross', 'The Complete Works, Volume 2 (tr. David Lewis, 1864)'),
+    ('John of the Cross', 'The Living Flame of Love, with his Letters, Poems and Minor Writings (tr. David Lewis, ed. Benedict Zimmerman)'),
+    ('Joseph Wilhelm and Thomas B. Scannell', "A Manual of Catholic Theology Based on Scheeben's Dogmatik, Volume 1"),
+    ('Joseph Wilhelm and Thomas B. Scannell', "A Manual of Catholic Theology Based on Scheeben's Dogmatik, Volume 2"),
+    ('Matthias Joseph Scheeben', 'The Glories of Divine Grace, a Free Rendering of the Original Treatise'),
+    ('N. Orloff', 'The Octoechos, or the Book of Eight Tones, a Primer containing the Sunday Service in the Eight Tones (1898)'),
+    ('Optatus', 'The Work of St. Optatus against the Donatists (Vassall-Phillips 1917)'),
+    ('Origen', 'Commentary on Matthew, books 10-17 (Klostermann 1935-37)'),
+    ('Richard Challoner', 'Considerations upon Christian Truths and Christian Duties, Meditations for Every Day in the Year'),
+    ('Richard Challoner', 'The Lives of the Fathers of the Eastern Deserts (Sadlier 1863)'),
+    ('Roman Catholic Church', 'Catechism of the Council of Trent for Parish Priests (McHugh and Callan 1923)'),
+    ('Severus of Antioch', 'The Sixth Book of the Select Letters of Severus, Volume 2, Translation, Part 2 (Brooks 1904)'),
+    ('Teresa of Avila', 'The Life of St. Teresa of Jesus'),
+    ('Thomas Aquinas', 'Aquinas Ethicus - The Moral Teaching of St. Thomas, Volume 2, tr. Joseph Rickaby (1892)'),
+    ('Thomas Aquinas', 'Of God and His Creatures'),
+    ('Thomas Aquinas', 'On Prayer and the Contemplative Life'),
+    ('Thomas Aquinas', 'Summa Contra Gentiles, Book III, tr. English Dominican Fathers (1928)'),
+    ('Thomas Aquinas', 'Summa Contra Gentiles, Book IV, tr. English Dominican Fathers (1929)'),
+    ('Thomas Aquinas', 'Summa Theologica, Part I'),
+    ('Thomas Aquinas', 'Summa Theologica, Part I-II (Pars Prima Secundae) From the Complete American Edition'),
+    ('Thomas Aquinas', 'Summa Theologica, Part II-II (Secunda Secundae) Translated by Fathers of the'),
+    ('Thomas Aquinas', 'Summa Theologica, Part III (Tertia Pars) From the Complete American Edition'),
+    ('Thomas Aquinas', 'Summa Theologica, Third Part (Supplement) QQ. 87-99 and Appendices, tr. English Dominican Fathers (1922)'),
+    ('Thomas a Kempis', 'A Meditation on the Incarnation of Christ and Sermons on the Life and Passion of Our Lord, tr. Vincent Scully (1907)'),
+    ('Thomas a Kempis', 'Sermons to the Novices Regular, tr. Vincent Scully (1907)'),
+})
+
+
 def vulgate_work_ids(db: sqlite3.Connection) -> frozenset:
-    return frozenset(r[0] for r in db.execute('SELECT id, title FROM works') if VULGATE_TITLE_RE.search(r[1] or ''))
+    return frozenset(r[0] for r in db.execute('SELECT id, author, title FROM works')
+                     if VULGATE_TITLE_RE.search(r[2] or '') or (r[1], r[2]) in DOUAY_WORKS)
 
 
 def add_scripture_refs(db: sqlite3.Connection, limits: dict, processes: int = 3, use_cache: bool = False) -> int:

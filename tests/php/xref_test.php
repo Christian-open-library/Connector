@@ -1031,8 +1031,8 @@ function test_sample_build(): void
 
 function test_psalm_citations_from_latin_and_greek_editions_explain_the_numbering(): void
 {
-    $page = static function (string $title): string {
-        $work = ['id' => 1, 'author' => 'Ambrose of Milan', 'title' => $title, 'year' => 1913, 'source_url' => '',
+    $page = static function (string $title, string $author = 'Ambrose of Milan'): string {
+        $work = ['id' => 1, 'author' => $author, 'title' => $title, 'year' => 1913, 'source_url' => '',
                  'full_title' => $title, 'collection' => 'ccel-schaff', 'license' => '', 'type' => 'book'];
         $hits = [['id' => 337300713, 'work_id' => 1, 'seq' => 1, 'page_start' => null, 'page_end' => null, 'section' => '',
                   'text' => 'ubi est iustitia eius', 'notes' => [], 'work' => $work, 'cites' => 'Ps 119:69', 'in_note' => false]];
@@ -1041,4 +1041,8 @@ function test_psalm_citations_from_latin_and_greek_editions_explain_the_numberin
     assert_contains(Format::VULGATE_PSALMS_NOTE, $page('Expositio Psalmi CXVIII (Latin, CSEL)'));
     assert_contains(Format::VULGATE_PSALMS_NOTE, $page('Ancoratus (Greek)'));
     assert_not_contains(Format::VULGATE_PSALMS_NOTE, $page('An Exposition of Psalm 119'));
+    // English works that follow the Douay-Rheims (indexer.references.DOUAY_WORKS), by author and title
+    assert_contains(Format::VULGATE_PSALMS_NOTE, $page('Summa Theologica, Part I', 'Thomas Aquinas'));
+    assert_not_contains(Format::VULGATE_PSALMS_NOTE, $page('Catena Aurea - Gospel of Matthew', 'Thomas Aquinas'));
+    assert_not_contains(Format::VULGATE_PSALMS_NOTE, $page('Summa Theologica, Part I', 'Someone Else'));
 }

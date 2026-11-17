@@ -201,6 +201,35 @@ class VulgatePsalms(unittest.TestCase):
         self.assertEqual(refs('Rom. 8. 28; Ps 118:1', None, True), ['Romans 8:28', 'Psalms 119:1'])
 
 
+class DouayWorks(unittest.TestCase):
+    """English works that follow the Douay-Rheims are read like the Latin editions (follow-up to #99)."""
+
+    def db(self, *works):
+        import sqlite3
+        db = sqlite3.connect(':memory:')
+        db.execute('CREATE TABLE works(id INTEGER PRIMARY KEY, author TEXT, title TEXT)')
+        db.executemany('INSERT INTO works VALUES (?, ?, ?)', [(i + 1, a, t) for i, (a, t) in enumerate(works)])
+        return db
+
+    def test_listed_works_are_flagged(self):
+        from indexer import references
+        db = self.db(('Thomas Aquinas', 'Summa Theologica, Part I'),
+                     ('Thomas Aquinas', 'Catena Aurea - Gospel of Matthew'),
+                     ('Someone Else', 'Summa Theologica, Part I'),
+                     ('Ambrose of Milan', 'Expositio Psalmi CXVIII (Latin, CSEL)'))
+        self.assertEqual(references.vulgate_work_ids(db), frozenset({1, 4}))
+
+    def test_plugin_list_is_the_same(self):
+        import ast, re
+        from indexer import references
+        from pathlib import Path
+        php = Path(__file__).resolve().parents[2] / 'plugin/col-library-connector/src/Format.php'
+        body = re.search(r'const DOUAY_WORKS = \[(.*?)\n    \];', php.read_text(), re.S).group(1)
+        pairs = {(ast.literal_eval(a), ast.literal_eval(t))
+                 for a, t in re.findall(r"\[('(?:[^'\\]|\\.)*'), ('(?:[^'\\]|\\.)*')\]", body)}
+        self.assertEqual(pairs, set(references.DOUAY_WORKS))
+
+
 @unittest.skipUnless(scripture.REPO.joinpath('CCEL_Library', 'Bibles').is_dir(), 'library Bibles not available')
 class LibraryBibles(unittest.TestCase):
     """The six Bibles of the library, parsed: no verse twice, KJV Ezra and Nehemiah without the
