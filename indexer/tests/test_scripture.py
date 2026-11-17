@@ -164,7 +164,6 @@ class ChapterVerses(unittest.TestCase):
         self.assertEqual(clean_verse('a man and a God'), 'a man and a God')
 
 
-@unittest.skipUnless(scripture.REPO.joinpath('CCEL_Library', 'Bibles').is_dir(), 'library Bibles not available')
 class VulgatePsalms(unittest.TestCase):
     """Latin and Greek editions number the Psalms as the Vulgate and Septuagint do (.github #99, fidpa:
     Ambrose's Expositio Psalmi CXVIII is on the KJV's Psalm 119)."""
@@ -202,6 +201,7 @@ class VulgatePsalms(unittest.TestCase):
         self.assertEqual(refs('Rom. 8. 28; Ps 118:1', None, True), ['Romans 8:28', 'Psalms 119:1'])
 
 
+@unittest.skipUnless(scripture.REPO.joinpath('CCEL_Library', 'Bibles').is_dir(), 'library Bibles not available')
 class LibraryBibles(unittest.TestCase):
     """The six Bibles of the library, parsed: no verse twice, KJV Ezra and Nehemiah without the
     Apocrypha's 1 and 2 Esdras, Webster and Douay-Rheims numbering, no Markdown left in the text."""
