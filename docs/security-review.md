@@ -1,6 +1,6 @@
 # Security reviews
 
-*Newest first: 16 November 2026 (the library search on the website); 14 November 2026 (the quotation checker on the
+*Newest first: 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
 website; everything changed since 10 November)
 and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
@@ -15,6 +15,21 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 16 November 2026, later: the Browse page's search in the books
+
+The Browse page's box now looks in the books by itself when the words typed match no author or title: after a pause
+of 1.2 seconds in typing, never twice for the same words. Enter looks in the books at once for any words. It uses the
+same `/search` address, limits and display code as the search box on every page (reviewed 16 November). A review read
+the page's new code. **It found 3 small issues and fixed all of them; 1 thing is accepted.** Everything the page shows
+from the catalog and from the server is put in as plain text.
+
+| Issue | Status |
+|---|---|
+| A link to the Browse page with words in it searched by itself even inside another site's frame, so another site could spend its visitors' daily searches (and a share of everyone's). | **Fixed:** inside a frame, or a window another page opened, it waits for the visitor to press Enter or type. |
+| After the server said there had been too many searches, the page kept asking each time typing paused. Those refusals cost nothing, but the page went on asking. | **Fixed:** it stops asking by itself until the wait is over (for the rest of the visit if the day's limit is reached); Enter still asks and shows the server's message. |
+| A book's "Read at" link was made from the catalog without checking that it is a web address. The catalog is the library's own, so nothing could happen today. | **Fixed:** only web addresses become links. |
+| A plain link (not a frame) to the Browse page with words in it runs one search when it opens. | **Accepted:** that is what share links are for; it costs one search from the visitor's own limit. |
 
 ## 16 November 2026: the library search on the website
 
