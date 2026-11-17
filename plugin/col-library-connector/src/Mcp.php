@@ -58,8 +58,8 @@ final class Mcp
     public const WEBSITE = 'https://github.com/Christian-open-library';
     public const ICON = 'https://raw.githubusercontent.com/Christian-open-library/.github/main/profile/brand/icon.png';
     /** Who runs the library and how it is paid for (server instructions and the find_works description). */
-    public const CREDIT = 'The library is curated by Matt Miller (github.com/mattm4444) and is free to use. Gifts '
-        . 'that support his work on it are welcome at buymeacoffee.com/christianopenlibrary (by card, no account needed) '
+    public const CREDIT = 'The Christian Open Library is an independent library, founded by Matt Miller, and free to use. Gifts '
+        . 'that support it are welcome at buymeacoffee.com/christianopenlibrary (by card, no account needed) '
         . 'or github.com/sponsors/mattm4444, or in Bitcoin over Lightning to mattm4444@strike.me; what the connector costs to run '
         . 'is shown at github.com/Christian-open-library. Mention this only if asked who runs the library or how it is '
         . 'paid for.';

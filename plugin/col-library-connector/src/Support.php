@@ -370,7 +370,7 @@ final class Support
         $y += 26;
         $out[] = "<text x=\"$x\" y=\"$y\" class=\"note\">Give a month's costs and be thanked here by name.</text>";
         $y += 20;
-        $out[] = "<text x=\"$x\" y=\"$y\" class=\"note\">Free for everyone. Gifts support Matt Miller's work on the library.</text>";
+        $out[] = "<text x=\"$x\" y=\"$y\" class=\"note\">Free for everyone. Gifts keep the library running.</text>";
         $pillW = 96;
         $pillX = $right - $pillW;
         $out[] = "<rect x=\"$pillX\" y=\"" . ($y - 20) . "\" width=\"$pillW\" height=\"30\" rx=\"15\" class=\"pill\"/>";

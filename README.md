@@ -64,4 +64,4 @@ A 75-question test checks whether the right book comes back. Today about 87% of 
 
 MIT (see [LICENSE](LICENSE)). The books themselves are public domain or Creative Commons and live in a separate repository.
 
-The library is curated by [Matt Miller](https://github.com/mattm4444). If it's useful to you, you can support his work on it [by card](https://buymeacoffee.com/christianopenlibrary) or through [GitHub Sponsors](https://github.com/sponsors/mattm4444), or send Bitcoin over Lightning to `mattm4444@strike.me`.
+The Christian Open Library is an independent library, founded by [Matt Miller](https://github.com/mattm4444). If it's useful to you, you can support it [by card](https://buymeacoffee.com/christianopenlibrary) or through [GitHub Sponsors](https://github.com/sponsors/mattm4444), or send Bitcoin over Lightning to `mattm4444@strike.me`.
