@@ -1028,3 +1028,17 @@ function test_sample_build(): void
     // some old forms (mostly in Coles and Wilson: "Fidelitie", "Vncertainly") are not found as typed.
     assert_true($share >= 0.95, sprintf('%.1f%% of %d headwords found by their own norm', 100 * $share, count($rows)));
 }
+
+function test_psalm_citations_from_latin_and_greek_editions_explain_the_numbering(): void
+{
+    $page = static function (string $title): string {
+        $work = ['id' => 1, 'author' => 'Ambrose of Milan', 'title' => $title, 'year' => 1913, 'source_url' => '',
+                 'full_title' => $title, 'collection' => 'ccel-schaff', 'license' => '', 'type' => 'book'];
+        $hits = [['id' => 337300713, 'work_id' => 1, 'seq' => 1, 'page_start' => null, 'page_end' => null, 'section' => '',
+                  'text' => 'ubi est iustitia eius', 'notes' => [], 'work' => $work, 'cites' => 'Ps 119:69', 'in_note' => false]];
+        return Format::citations(new CitationResult('Psalm 119', '', [], $hits, 1, 1, 0, 0, 'Psalm 119', 0, false, []));
+    };
+    assert_contains(Format::VULGATE_PSALMS_NOTE, $page('Expositio Psalmi CXVIII (Latin, CSEL)'));
+    assert_contains(Format::VULGATE_PSALMS_NOTE, $page('Ancoratus (Greek)'));
+    assert_not_contains(Format::VULGATE_PSALMS_NOTE, $page('An Exposition of Psalm 119'));
+}

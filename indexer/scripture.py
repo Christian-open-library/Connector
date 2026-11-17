@@ -137,6 +137,54 @@ ORD_MAP = {'1': 0, 'i': 0, 'first': 0, '1st': 0, '1.': 0, '2': 1, 'ii': 1, 'seco
 # the first book: the counts are a lower bound.
 FOURFOLD = {11: (None, None, 11, 12), 79: (None, None, 79, 80)}
 ONE_CHAPTER = {31, 57, 63, 64, 65}     # Obadiah, Philemon, 2 John, 3 John, Jude: "Jude 3" is verse 3
+PSALMS = 19
+# Psalms numbered as the Vulgate and the Septuagint number them, as the Latin and Greek editions of the
+# Fathers cite them (their Psalm 118 is the KJV's 119): from 10 to 146 mostly one lower than the KJV's;
+# 9 and 113 are two KJV psalms each, 114+115 and 146+147 one each (vulgate_psalm()). Their verse numbers
+# count a psalm's heading, as the Hebrew does: in these editions' notes verse 1 of a psalm without a
+# heading is cited about as often as verse 2, verse 1 of one with a heading a quarter as often.
+# Psalms whose heading is verse 1 (or verses 1-2), in the Vulgate's numbers:
+VULGATE_HEADING = {**{v: 1 for v in (3, 4, 5, 6, 7, 8, 9, 11, 17, 18, 19, 20, 21, 29, 30, 33, 35, 37, 38, 39,
+                                     40, 41, 43, 44, 45, 46, 47, 48, 52, 54, 55, 56, 57, 58, 60, 61, 62, 63,
+                                     64, 66, 67, 68, 69, 74, 75, 76, 79, 80, 82, 83, 84, 87, 88, 91, 101,
+                                     107, 139, 141)},
+                   50: 2, 51: 2, 53: 2, 59: 2}
+# Psalms whose verses are divided differently from the KJV's even without the heading (the Douay-Rheims
+# has a verse more or fewer): which verse is meant is uncertain, so only the psalm is indexed.
+VULGATE_UNALIGNED = {2, 4, 10, 19, 28, 42, 43, 55, 125, 135, 150}
+# Vulgate psalm -> the KJV psalms it covers
+_VULGATE_WHOLE = {9: (9, 10), 113: (114, 115), 114: (116,), 115: (116,), 146: (147,), 147: (147,)}
+# Vulgate psalms that are part of a KJV psalm or hold two: (first verse, last verse, KJV psalm, added to
+# the verse), after the heading is taken off. Psalm 115's verses are numbered 1-10 or 10-19 (after Psalm
+# 114's 1-9) and Psalm 147's 1-9 or 12-20, as the editions differ; the overlap (115:10, 147:10-11) is
+# indexed as the psalm only.
+_VULGATE_PARTS = {9: ((1, 20, 9, 0), (21, 38, 10, -20)), 113: ((1, 8, 114, 0), (9, 26, 115, -8)),
+                  114: ((1, 9, 116, 0),), 115: ((1, 9, 116, 9), (11, 19, 116, 0)),
+                  146: ((1, 11, 147, 0),), 147: ((1, 9, 147, 11), (12, 20, 147, 0))}
+
+
+def vulgate_psalm(ch: int, v1: int | None, v2: int | None) -> list[tuple[int, int | None, int | None]]:
+    """The KJV (chapter, verse_start, verse_end) for Psalm ch:v1-v2 numbered as the Vulgate does: the
+    psalms alone for a chapter, the psalm without a verse where the verse cannot be converted with
+    confidence (the heading itself, VULGATE_UNALIGNED, the overlaps of _VULGATE_PARTS), [] for a verse
+    the psalm does not have. A range running into the next KJV psalm is cut at the end of the first."""
+    if not 1 <= ch <= 150:
+        return []
+    whole = _VULGATE_WHOLE.get(ch, (ch if ch <= 8 or ch >= 148 else ch + 1,))
+    if v1 is None:
+        return [(k, None, None) for k in whole]
+    head = VULGATE_HEADING.get(ch, 0)
+    if v1 <= head or ch in VULGATE_UNALIGNED:
+        return [(whole[0], None, None)]
+    v1, v2 = v1 - head, (v2 - head if v2 is not None else None)
+    if ch not in _VULGATE_PARTS:
+        return [(whole[0], v1, v2)]
+    for first, last, kjv, add in _VULGATE_PARTS[ch]:
+        if first <= v1 <= last:
+            return [(kjv, v1 + add, min(v2, last) + add if v2 is not None else None)]
+    return [(whole[0], None, None)] if v1 <= _VULGATE_PARTS[ch][-1][1] else []
+
+
 RANGE_AFTER_RE = re.compile(r'\s*(?:[-–—]|to)\s*(\d{1,3})(?![\d])')
 # more verses of the same chapter: "1 Tim. 6. 17, 18, 19", "Heb. 12:22,23" (not "28, 9. 5": a chapter)
 LIST_ITEM_RE = re.compile(r'\s*,\s*(\d{1,3})(?:\s*(?:[-–—]|to)\s*(\d{1,3}))?(?![\d])(?!\s*[.:]\s*\d)')
@@ -189,9 +237,20 @@ def _verse_list(text: str, pos: int, first: list[tuple[int, int | None]]) -> tup
     return spans, pos
 
 
-def extract_refs(text: str, limits: dict | None = None) -> list[tuple[int, int, int | None, int | None]]:
+def _resolved(bid: int, ch: int, v1: int | None, v2: int | None, limits: dict | None, vulgate: bool) -> list:
+    """_checked() of a reference, as a list; with `vulgate`, a Psalm numbered as the Vulgate does
+    becomes the KJV's (vulgate_psalm())."""
+    if vulgate and bid == PSALMS:
+        return [r for c, a, b in vulgate_psalm(ch, v1, v2) if (r := _checked(bid, c, a, b, limits))]
+    r = _checked(bid, ch, v1, v2, limits)
+    return [r] if r else []
+
+
+def extract_refs(text: str, limits: dict | None = None,
+                 vulgate_psalms: bool = False) -> list[tuple[int, int, int | None, int | None]]:
     """(book, chapter, verse_start, verse_end) for every Bible reference found in plain text.
-    `limits` (book -> {chapter: max_verse}) rejects impossible chapters/verses. Besides "Rom. 8. 28"
+    `limits` (book -> {chapter: max_verse}) rejects impossible chapters/verses; `vulgate_psalms` reads
+    Psalm numbers as the Vulgate and Septuagint give them (vulgate_psalm()). Besides "Rom. 8. 28"
     and its kin: verse lists ("1 Tim. 6. 17, 18, 19"), more chapters of the same book after ";"
     ("Rom. i. 32; ii. 1") and a lone number in a one-chapter book ("Jude 3", "Philem. 10")."""
     out = []
@@ -257,16 +316,16 @@ def extract_refs(text: str, limits: dict | None = None) -> list[tuple[int, int, 
         if v1 is None:
             if alias in AMBIGUOUS or len(alias) <= 2:
                 continue
-            if ref := _checked(bid, ch, None, None, limits):
-                out.append(ref)
+            out.extend(_resolved(bid, ch, None, None, limits, vulgate_psalms))
             continue
         # this chapter's verses, then other chapters of the book given after ";"
         while True:
             spans, pos = _verse_list(text, pos, first)
-            if (head := _checked(bid, ch, *spans[0], limits)) is None:
+            if not (head := _resolved(bid, ch, *spans[0], limits, vulgate_psalms)):
                 break
-            out.append(head)
-            out.extend(ref for a, b in spans[1:] if (ref := _checked(bid, ch, a, b, limits)))
+            out.extend(head)
+            for a, b in spans[1:]:
+                out.extend(_resolved(bid, ch, a, b, limits, vulgate_psalms))
             c = CONTINUATION_RE.match(text, pos)
             ch = (int(c.group(1)) if c.group(1).isdigit() else roman_to_int(c.group(1))) if c else None
             if ch is None:

@@ -314,6 +314,12 @@ final class Format
      * The reference and its text (BSB and KJV), how often it is cited, then the citing passages in
      * the search result format, each marked with what it cites and whether only in a margin note.
      */
+    /** Latin and Greek editions, whose Psalm numbers are the Vulgate's (indexer.references.VULGATE_TITLE_RE) */
+    private const VULGATE_TITLE = '/\((?:Latin|Greek)(?:\)|,| translation\b| version\b)/';
+    public const VULGATE_PSALMS_NOTE = 'The Latin and Greek editions number the Psalms as the Vulgate and Septuagint '
+        . 'do, counting the heading as a verse; their citations are listed here by the KJV\'s numbers (their '
+        . '"Ps 118:69" is Psalm 119:69). Where the verse is uncertain, only the psalm is listed.';
+
     public static function citations(CitationResult $r): string
     {
         $top = "Citations of {$r->label} in the library" . ($r->heading !== '' ? " ({$r->heading})" : '');
@@ -355,6 +361,10 @@ final class Format
                              . self::pageLinkLine($p['work'], $p['page_start'] ?? null, $p['text'])];
         }
         $notes = $r->notes;
+        if (preg_match('/^Psalms? /', $r->label) === 1 && array_filter($r->hits,
+                static fn (array $p): bool => preg_match(self::VULGATE_TITLE, $p['work']['title'] ?? '') === 1)) {
+            $notes[] = self::VULGATE_PSALMS_NOTE;
+        }
         if ($last < $r->passages) {
             array_unshift($notes, $last <= Citations::MAX_OFFSET
                 ? "More passages cite {$r->label}: repeat with offset $last for the next ones."

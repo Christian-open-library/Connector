@@ -232,8 +232,9 @@ def add_bible(db: sqlite3.Connection, repo: Path = REPO) -> tuple[dict, list[str
 _w: dict = {}
 
 
-def _init(limits):
+def _init(limits, vulgate=frozenset()):
     _w['limits'] = limits
+    _w['vulgate'] = vulgate
 
 
 def _refs_for_groups(groups):
@@ -245,14 +246,15 @@ def _refs_for(rows):
     limits = _w['limits']
     for pid, work_id, text, notes in rows:
         seen = set()
+        vulgate = work_id in _w.get('vulgate', ())
         body = corpus.strip_markdown(pre_markdown(zlib.decompress(text).decode('utf-8')))
-        for ref in extract_refs(body, limits):
+        for ref in extract_refs(body, limits, vulgate):
             if ref not in seen:
                 seen.add(ref)
                 out.append((*ref, pid, work_id, 0))
         if notes:
             for n in json.loads(zlib.decompress(notes).decode('utf-8')):
-                for ref in extract_refs(corpus.strip_markdown(pre_markdown(n)), limits):
+                for ref in extract_refs(corpus.strip_markdown(pre_markdown(n)), limits, vulgate):
                     if ref not in seen:
                         seen.add(ref)
                         out.append((*ref, pid, work_id, 1))
@@ -271,10 +273,22 @@ def no_citation_work_ids(db: sqlite3.Connection) -> set:
     return ids
 
 
+# Latin and Greek editions ("(Latin, CSEL)", "(Greek)", "(Latin translation, Vaschalde 1915)") number
+# the Psalms as the Vulgate and Septuagint do, in their text and their editors' notes: none of their
+# references reads as the KJV's numbering (no "Ps 119" past verse 7, 359 "Ps 118" past verse 29, 2026-11-17).
+# Not "(Latin with English translation, ...)" or "(Greek-Russian)": English editions.
+VULGATE_TITLE_RE = re.compile(r'\((?:Latin|Greek)(?:\)|,| translation\b| version\b)')
+
+
+def vulgate_work_ids(db: sqlite3.Connection) -> frozenset:
+    return frozenset(r[0] for r in db.execute('SELECT id, title FROM works') if VULGATE_TITLE_RE.search(r[1] or ''))
+
+
 def add_scripture_refs(db: sqlite3.Connection, limits: dict, processes: int = 3, use_cache: bool = False) -> int:
     """Citations of every passage, inserted in passage id order. With use_cache (full builds), a work whose
     passages (text, notes, ids) and the code are unchanged takes its rows from indexer.buildcache."""
     skip = no_citation_work_ids(db)
+    vulgate = vulgate_work_ids(db)
     store = buildcache.open_store() if use_cache else None
     version = buildcache.code_version(repr(sorted(limits.items())).encode()) if use_cache else ''
 
@@ -293,7 +307,7 @@ def add_scripture_refs(db: sqlite3.Connection, limits: dict, processes: int = 3,
             yield wid, rows
 
     def key_of(rows) -> str:
-        h = hashlib.sha256(version.encode())
+        h = hashlib.sha256(version.encode() + (b'\0vulgate' if rows and rows[0][1] in vulgate else b''))
         for pid, wid, text, notes in rows:
             h.update(b'\0%d\0%d\0%d\0' % (pid, wid, len(text)) + text + b'\0' + (notes or b'-'))
         return h.hexdigest()
@@ -335,7 +349,7 @@ def add_scripture_refs(db: sqlite3.Connection, limits: dict, processes: int = 3,
             n_works += 1
             n_cached += cached
 
-    with mp.Pool(processes, initializer=_init, initargs=(limits,)) as pool:
+    with mp.Pool(processes, initializer=_init, initargs=(limits, vulgate)) as pool:
         for batch in batches():
             groups = [rows for _, cached, rows in batch if not cached]
             pending.append((batch, pool.apply_async(_refs_for_groups, (groups,)) if groups else None))

@@ -4,8 +4,8 @@ from indexer import scripture
 from indexer.scripture import chapter_verses, clean_verse, extract_refs, format_ref, identify_book
 
 
-def refs(text, limits=None):
-    return [format_ref(*r) for r in extract_refs(text, limits)]
+def refs(text, limits=None, vulgate=False):
+    return [format_ref(*r) for r in extract_refs(text, limits, vulgate)]
 
 
 # verse counts of the chapters used below, as verse_limits() gives them from the KJV
@@ -165,6 +165,43 @@ class ChapterVerses(unittest.TestCase):
 
 
 @unittest.skipUnless(scripture.REPO.joinpath('CCEL_Library', 'Bibles').is_dir(), 'library Bibles not available')
+class VulgatePsalms(unittest.TestCase):
+    """Latin and Greek editions number the Psalms as the Vulgate and Septuagint do (.github #99, fidpa:
+    Ambrose's Expositio Psalmi CXVIII is on the KJV's Psalm 119)."""
+    PS = {19: {9: 20, 10: 18, 51: 19, 114: 8, 115: 18, 116: 19, 118: 29, 119: 176, 120: 7, 147: 20, 3: 8, 1: 6}}
+
+    def test_the_reported_examples(self):
+        # Ambrose P337300713: "Ps 118:69; ... Ps 119:6; Ps 119:7"; Augustine P337900291: "Ps 50:1" (the
+        # heading of the Vulgate's 50 is verses 1-2, so verse 1 is the psalm only)
+        self.assertEqual(refs('Ps 118:69; Ps 119:6; Ps 119:7', self.PS, True),
+                         ['Psalms 119:69', 'Psalms 120:6', 'Psalms 120:7'])
+        self.assertEqual(refs('Ps 50:1', self.PS, True), ['Psalms 51'])
+        self.assertEqual(refs('Ps 50:3', self.PS, True), ['Psalms 51:1'], 'miserere mei, Deus')
+        self.assertEqual(refs('Ps 118:69', self.PS), [], 'without the flag: KJV numbers, no such verse')
+
+    def test_headings_and_unchanged_psalms(self):
+        self.assertEqual(refs('Ps 1:2', self.PS, True), ['Psalms 1:2'])
+        self.assertEqual(refs('Ps 3:6', self.PS, True), ['Psalms 3:5'], 'ego dormivi: KJV 3:5')
+        self.assertEqual(refs('Ps 3:1', self.PS, True), ['Psalms 3'], 'the heading: the psalm only')
+        self.assertEqual(refs('Psal. cxviii. 105', self.PS, True), ['Psalms 119:105'])
+
+    def test_joined_and_divided_psalms(self):
+        self.assertEqual(refs('Ps 9:2; 9:22; 9:39', self.PS, True), ['Psalms 9:1', 'Psalms 10:1', 'Psalms 10:18'])
+        self.assertEqual(refs('Ps 9:20-23', self.PS, True), ['Psalms 9:19-20'], 'cut at the end of KJV 9')
+        self.assertEqual(refs('Ps 113:1; 113:9; 113:26', self.PS, True),
+                         ['Psalms 114:1', 'Psalms 115:1', 'Psalms 115:18'])
+        self.assertEqual(refs('Ps 114:3; 115:1; 115:10; 115:12', self.PS, True),
+                         ['Psalms 116:3', 'Psalms 116:10', 'Psalms 116', 'Psalms 116:12'])
+        self.assertEqual(refs('Ps 146:1; 147:1; 147:11; 147:20', self.PS, True),
+                         ['Psalms 147:1', 'Psalms 147:12', 'Psalms 147', 'Psalms 147:20'])
+        self.assertEqual(scripture.vulgate_psalm(9, None, None), [(9, None, None), (10, None, None)])
+        self.assertEqual(scripture.vulgate_psalm(113, None, None), [(114, None, None), (115, None, None)])
+        self.assertEqual(scripture.vulgate_psalm(114, 12, None), [], 'no such verse')
+
+    def test_other_books_are_unchanged(self):
+        self.assertEqual(refs('Rom. 8. 28; Ps 118:1', None, True), ['Romans 8:28', 'Psalms 119:1'])
+
+
 class LibraryBibles(unittest.TestCase):
     """The six Bibles of the library, parsed: no verse twice, KJV Ezra and Nehemiah without the
     Apocrypha's 1 and 2 Esdras, Webster and Douay-Rheims numbering, no Markdown left in the text."""
@@ -214,6 +251,18 @@ class LibraryBibles(unittest.TestCase):
         self.assertNotIn(('drb', 45, 11, 1), self.verse)
         self.assertTrue(self.verse[('drb', 71, 1, 1)].startswith('All wisdom is from the Lord God'), 'not the prologue')
         self.assertEqual(sorted(self.chapters('drb', 72)), [1, 2, 3, 4, 5, 6], 'Baruch')
+
+    def test_vulgate_psalm_table_matches_the_douay_rheims(self):
+        """The last verse of each Vulgate psalm (the Douay-Rheims's numbers) is the last of the KJV psalm
+        it is converted to, except where only the psalm is indexed (VULGATE_UNALIGNED)."""
+        drb, kjv = self.chapters('drb', 19), self.chapters('kjv', 19)
+        last = {v: max(c for (t, b, c2, c) in self.verse if t == 'drb' and b == 19 and c2 == v) for v in drb}
+        for v in range(1, 151):
+            if v in scripture.VULGATE_UNALIGNED:
+                continue
+            [(k, verse, _)] = scripture.vulgate_psalm(v, last[v], None)
+            want = {114: 9, 146: 11}.get(v, kjv[k])          # the first part of KJV 116 and 147
+            self.assertEqual(verse, want, f'Vulgate {v}:{last[v]} -> KJV {k}:{verse}')
 
     def test_text_is_clean(self):
         self.assertTrue(self.verse[('ylt', 1, 3, 20)].startswith("And the man calleth his wife`s name Eve"))
