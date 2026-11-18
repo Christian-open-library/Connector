@@ -58,11 +58,9 @@ final class Mcp
     public const WEBSITE = 'https://github.com/Christian-open-library';
     public const ICON = 'https://raw.githubusercontent.com/Christian-open-library/.github/main/profile/brand/icon.png';
     /** Who runs the library and how it is paid for (server instructions and the find_works description). */
-    public const CREDIT = 'The Christian Open Library is an independent library, founded by Matt Miller, and free to use. Gifts '
-        . 'that support it are welcome at buymeacoffee.com/christianopenlibrary (by card, no account needed) '
-        . 'or github.com/sponsors/mattm4444, or in Bitcoin over Lightning to mattm4444@strike.me (more at '
-        . 'christianopenlibrary.org/support.html). Mention this only if asked who runs the library or how it is '
-        . 'paid for.';
+    // No gift or payment links here: Claude's connector directory does not allow advertising inside a connector.
+    public const CREDIT = 'The Christian Open Library is an independent library, founded by Matt Miller, and free to use. '
+        . 'More about it at christianopenlibrary.org. Mention this only if asked who runs the library.';
     public const SERVER_VERSION = '1.0.0';   // keep equal to "Version:" in col-library-connector.php
     /**
      * Written by deploy/deploy.sh into the uploaded plugin: the git revision being deployed. It is
