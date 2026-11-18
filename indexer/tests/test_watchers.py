@@ -140,8 +140,10 @@ class Watchers(unittest.TestCase):
             self.assertIn(f'good_run("{name}")', (ROOT / f'x/{script}.py').read_text(), f'{script} leaves its mark')
 
 
-    # decline-reuse (Matt, 2026-11-14): apps, websites, AI and paid use are never allowed and take no
-    # requests; the watchers suggest it with a fixed standard reply that nothing a stranger typed shapes.
+    # decline-reuse (Matt, 2026-11-14; narrowed 2026-11-18): AI training, datasets, mirrors and the connector
+    # behind another service are never allowed and take no requests; the watchers suggest it with a fixed
+    # standard reply that nothing a stranger typed shapes. More than 10 books or paid use is a license
+    # request Matt decides ("license" on GitHub, "decide" by email).
     def watcher(self, name, answer):
         """Load x/<name>.py against this test's state, with Claude answering `answer`."""
         with mock.patch.dict(sys.modules, {'poll': self.poll}):
@@ -164,6 +166,17 @@ class Watchers(unittest.TestCase):
         self.assertIn('(deploy/decline-reuse.sh 90).', no)
         self.assertNotIn('--invite', no)
         self.assertNotIn("invited you", no)
+
+    def test_github_license_request_goes_to_matt_without_the_decline_reply(self):
+        gw, claude = self.watcher('github_watch', {'call': 'license', 'invite': True, 'why': '40 books, free site'})
+        with claude:
+            d = gw.judge('I want 40 books on my free site', 'login x')
+        self.assertEqual(d, {'call': 'license', 'invite': True, 'why': '40 books, free site'})
+        text = gw.message(d, 'someone', 'new', 91, 'access request', 'Library access: site')
+        self.assertIn('your call', text)
+        self.assertIn('"approve 91"', text)
+        self.assertNotIn('decline-reuse', text)
+        self.assertNotIn('not licensing', text)
 
     def test_github_invite_only_with_decline_reuse_and_a_real_true(self):
         for answer, invite in (({'call': 'decline-reuse', 'invite': 'true'}, False),
@@ -199,7 +212,9 @@ class Watchers(unittest.TestCase):
             low = text.lower()
             for bad in ('ask first', 'let me know', 'happy to discuss', 'exception for you', 'permission'):
                 self.assertNotIn(bad, low, text)
-            self.assertIn("not licensing the collection", text)
+            self.assertIn("I'm not licensing them for that", text)
+            self.assertIn('AI training', text)
+            self.assertNotIn('anything paid', low, 'paid use may be licensed since 2026-11-18')
             self.assertIn('download.html#reuse', text)
         self.assertNotIn('invit', rr.github(False))
         self.assertTrue(rr.email('').startswith('Hello,'))

@@ -519,3 +519,40 @@ function test_church_body_names_are_inert_in_notes(): void
         assert_not_contains(' <img', $text, "$tool: no tag can form");
     }
 }
+
+function test_a_body_that_allows_only_links_gets_its_link_and_wording(): void
+{
+    $dir = col_tmpdir('crc');
+    foreach (['library.sqlite', 'vectors.bin', 'ids.bin', 'manifest.json', 'config.php'] as $f) {
+        if (is_file(church_dir() . "/$f")) {
+            copy(church_dir() . "/$f", "$dir/$f");
+        }
+    }
+    $db = new \PDO("sqlite:$dir/library.sqlite");
+    $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+    $crc = 'Christian Reformed Church in North America';
+    $db->prepare("INSERT INTO church_bodies VALUES (?, 'Reformed', 1857, NULL, ?, ?, 1)")
+        ->execute([$crc, json_encode([$crc]), json_encode(['CRC', 'CRCNA'])]);
+    $db->prepare("INSERT INTO church_names VALUES (?, ?, 'Reformed', ?, 1)")
+        ->execute([$crc, json_encode(['CRC', 'CRCNA']), json_encode([[$crc, null, null]])]);
+    $db->prepare("INSERT INTO church_names VALUES ('United Reformed Churches in North America', ?, 'Reformed', ?, 1)")
+        ->execute([json_encode(['URCNA']), json_encode([[$crc, null, 1995]])]);
+    $db->prepare("INSERT INTO church_records VALUES (104, ?, 'Reformed', 'church_order', 'historical')
+                  ON CONFLICT(work_id) DO UPDATE SET denomination = excluded.denomination, doc_kind = excluded.doc_kind")->execute([$crc]);
+    $db = null;
+    $store = new Store($dir);
+    $n = static fn (string $d): string => implode("\n", (new Filters(denomination: $d))->resolve($store)['notes']);
+    foreach (['CRC', 'CRCNA', 'Christian Reformed Church'] as $d) {
+        assert_contains('https://www.crcna.org/synod/church-order-and-forms', $n($d), $d);
+        assert_contains('"This link is included with the permission of the Christian Reformed Church in North America. '
+            . 'The material on crcna.org is copyrighted and maintained by the Christian Reformed Church in North America."', $n($d), $d);
+    }
+    try {
+        $urc = $n('URCNA');
+    } catch (SearchInputException $e) {
+        $urc = $e->getMessage();     // the fixture's CRC record has no year, so the URCNA's years leave nothing
+    }
+    assert_contains('United Reformed Churches', $urc);
+    assert_not_contains('crcna.org', $urc, 'a body descended from the CRC does not get its link');
+    assert_not_contains('crcna.org', notes('PCA'));
+}

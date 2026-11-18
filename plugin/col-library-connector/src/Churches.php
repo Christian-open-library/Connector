@@ -54,6 +54,21 @@ final class Churches
 
     public const NAME_MAX = 120;   // characters of a denomination filter
 
+    /**
+     * Bodies that let the library link to their current documents but not copy them: when a denomination
+     * filter names one of these bodies itself (not a body descended from it), its note goes with the results.
+     * The CRCNA (Paul Faber, 2026-11-18): no reposting; links to crcna.org welcome if each says it is
+     * included with the CRCNA's permission and that the material is copyrighted and maintained by the CRCNA.
+     */
+    private const OFFICIAL_SITES = [
+        'Christian Reformed Church in North America' => 'The library has only historical editions of the Christian '
+            . 'Reformed Church\'s records (before 1931), not its current Church Order. For the rules in force today, '
+            . 'give the CRCNA\'s own page for its current Church Order, https://www.crcna.org/synod/church-order-and-forms '
+            . ', and with the link say, in these words: "This link is included with the permission of the Christian '
+            . 'Reformed Church in North America. The material on crcna.org is copyrighted and maintained by the '
+            . 'Christian Reformed Church in North America."',
+    ];
+
     /** "PC(USA)" -> "pcusa": lower case, no accents, letters and digits only. */
     public static function key(string $text): string
     {
@@ -118,6 +133,7 @@ final class Churches
         if ($direct !== [] && $named === []) {
             $notes[] = 'Denomination "' . $echo . '": the records of the ' . self::bodyList($direct, $bodies) . '.';
         }
+        $notes = array_merge($notes, self::officialSites(array_merge($direct, array_keys($named))));
         if ($found !== []) {
             return ['bodies' => $found, 'notes' => $notes];
         }
@@ -154,8 +170,9 @@ final class Churches
             }
             if ($loose !== []) {
                 return ['bodies' => array_fill_keys($loose, [[null, null]]),
-                        'notes' => ['No church body is named exactly "' . $echo . '"; searching the records of the '
-                            . count($loose) . ' whose names contain it: ' . self::bodyList($loose, $bodies) . '.']];
+                        'notes' => array_merge(['No church body is named exactly "' . $echo . '"; searching the records of the '
+                            . count($loose) . ' whose names contain it: ' . self::bodyList($loose, $bodies) . '.'],
+                            count($loose) === 1 ? self::officialSites($loose) : [])];
             }
         }
         throw new SearchInputException(self::unknown($store, $echo));
@@ -312,6 +329,12 @@ final class Churches
     }
 
     // ------------------------------------------------------------------------------------ notes
+
+    /** @param list<string> $named bodies the filter named themselves @return list<string> their OFFICIAL_SITES notes */
+    private static function officialSites(array $named): array
+    {
+        return array_values(array_intersect_key(self::OFFICIAL_SITES, array_flip($named)));
+    }
 
     /** @param array<string,array> $bodies @param list<string> $direct bodies matched by their own names */
     private static function lineageNote(string $echo, string $name, array $c, array $bodies, array $direct): string
