@@ -1,8 +1,8 @@
 # Christian Open Library connector
 
-The AI connector for the [Christian Open Library](https://github.com/Christian-open-library): about 7,700 public-domain works, mostly Christian (the Church Fathers, the Reformers, the Puritans, Spurgeon, Edwards, creeds and confessions, the historic records of more than 80 denominations, verse-by-verse commentaries and Greek and Hebrew study helps, sermons, the Princeton Review, poetry and fiction, and classic philosophy), Bible translations and classic Bible dictionaries, searchable from AI apps such as Claude, ChatGPT, Gemini and Grok.
+The AI connector for the [Christian Open Library](https://github.com/Christian-open-library). The library has about 7,700 public-domain works, mostly Christian. They include the Church Fathers, the Reformers, the Puritans, Spurgeon, Edwards, creeds and confessions, and the historic records of more than 80 denominations. There are verse-by-verse commentaries, Greek and Hebrew study helps, sermons, the Princeton Review, poetry and fiction, and classic philosophy. Bible translations and classic Bible dictionaries are there too. You can search it all from AI apps such as Claude, ChatGPT, Gemini and Grok.
 
-It's a [Model Context Protocol](https://modelcontextprotocol.io) server. Your AI app asks it questions, and it answers with passages quoted word for word from the library's copies of the books, with the author and title, and the year and page where the source gives them, so you can check them.
+It's a [Model Context Protocol](https://modelcontextprotocol.io) server. Your AI app asks it questions. It answers with passages quoted word for word from the library's copies of the books. Each comes with the author and title, and the year and page where the source gives them, so you can check them.
 
 **Use it:** add `https://mcp.christianopenlibrary.org/mcp` as a connector in your AI app and sign in with Google, your email or GitHub. It's free. Step-by-step instructions are on the [library's front page](https://github.com/Christian-open-library).
 
@@ -24,7 +24,7 @@ Six read-only tools:
 
 Each result comes with the text around it, so the AI can quote an author's own position rather than an objection he goes on to answer. If a quotation appears word for word in the library, it ranks first.
 
-Each search result is marked as an exact, close, partial or loose match; "close" means on the subject, not proof of the source, so for who said something the AI is told to use the quote checker. A result that credits its words to another writer ("as Augustine tells us") says so. When the library has nothing close to what was asked, or no such work, the result says NOT FOUND or NO CLOSE MATCH and tells the AI not to quote from memory. Passages from scanned books are marked as uncorrected OCR.
+Each search result is marked as an exact, close, partial or loose match. "Close" means on the subject. It is not proof of the source. For who said something, the AI is told to use the quote checker. A result that credits its words to another writer ("as Augustine tells us") says so. When the library has nothing close to what was asked or has no such work, the result says NOT FOUND or NO CLOSE MATCH. It tells the AI not to quote from memory. Passages from scanned books are marked as uncorrected OCR.
 
 ## How it works
 
@@ -43,7 +43,7 @@ Each search result is marked as an exact, close, partial or loose match; "close"
 - **Sign-in:** the connector is an OAuth 2.1 resource server. [WorkOS AuthKit](https://workos.com) handles sign-in (a one-time code by email, Google, or GitHub). The connector checks each token's signature and claims itself.
 - **No user data:** the connector keeps no copy of conversations or documents. Sign-in accounts are held by WorkOS, not by the connector.
 - **Logs:** they record the method, status and timing, with a pseudonymous id per person (part of a hash). Search text isn't logged unless debugging is turned on, and keys are always removed.
-- **Your questions:** to search by meaning, the search words are sent to Voyage AI. The library's Voyage account is opted out of data use, so Voyage deletes them after processing. [What happens to your question](https://github.com/Christian-open-library/.github/blob/main/PRIVACY.md) lists everyone who sees it.
+- **Your questions:** to search by meaning, the search words are sent to Voyage AI. The library's Voyage account is opted out of data use. Voyage deletes them after processing. [What happens to your question](https://github.com/Christian-open-library/.github/blob/main/PRIVACY.md) lists everyone who sees it.
 - **Limits:** each person has a daily limit, and a daily cap keeps search spending in check.
 
 ## Security
@@ -64,4 +64,4 @@ A 75-question test checks whether the right book comes back. Today about 87% of 
 
 MIT (see [LICENSE](LICENSE)). The books themselves are public domain or Creative Commons and live in a separate repository.
 
-The Christian Open Library is an independent library, founded by [Matt Miller](https://github.com/mattm4444). If it's useful to you, you can support it [by card](https://buymeacoffee.com/christianopenlibrary) or through [GitHub Sponsors](https://github.com/sponsors/mattm4444), or send Bitcoin over Lightning to `mattm4444@strike.me`.
+The Christian Open Library is an independent library, founded by [Matt Miller](https://github.com/mattm4444). If it's useful to you, you can support it [by card](https://buymeacoffee.com/christianopenlibrary) or through [GitHub Sponsors](https://github.com/sponsors/mattm4444). You can also send Bitcoin over Lightning to `mattm4444@strike.me`.
