@@ -506,7 +506,7 @@ final class Format
     // ------------------------------------------------------------------------------ check_quote
 
     /** What every quote check that finds nothing must say. */
-    public const QUOTE_NOT_FOUND_RULE = 'This does not show that the quotation is false: the library holds about 7,700 '
+    public const QUOTE_NOT_FOUND_RULE = 'This does not show that the quotation is false: the library holds over 7,600 '
         . 'works, not everything ever written or every edition, so it can only say that it cannot confirm it. Tell the '
         . 'user so plainly. ' . self::FROM_MEMORY_RULE;
 
