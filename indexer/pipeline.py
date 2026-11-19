@@ -298,7 +298,7 @@ def main(argv=None):
     b.add_argument('--processes', type=int, default=3)
     b.add_argument('--no-licensed', action='store_true', help='leave out the licensed shelf')
     nt = sub.add_parser('nightly')
-    nt.add_argument('--max-dollars', type=float, default=3.0)
+    nt.add_argument("--max-dollars", type=float, default=5.0)
     v = sub.add_parser('verify')
     v.add_argument('build_dir', type=Path)
     args = ap.parse_args(argv)

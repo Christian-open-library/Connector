@@ -115,14 +115,14 @@ class Watchers(unittest.TestCase):
         with mock.patch.object(watch, 'WATCH_STATE', self.state):
             now = time.time()
             self.assertEqual(watch.stale_watchers(now), 0, 'a new install is not reported at once')
-            self.assertEqual(watch.stale_watchers(now + 4 * 3600), 2, 'X and GitHub never ran: stale after 3 hours')
+            self.assertEqual(watch.stale_watchers(now + 4 * 3600), 1, 'GitHub never ran: stale after 3 hours')
             for name in watch.WATCHERS:
                 self.poll.good_run(name)
             self.assertEqual(watch.stale_watchers(now + 2 * 3600), 0)
-            self.assertEqual(watch.stale_watchers(now + 6 * 3600), 3, 'the digest may be 30 hours old')
-            self.assertEqual(watch.stale_watchers(now + 31 * 3600), 4)
+            self.assertEqual(watch.stale_watchers(now + 6 * 3600), 2, 'the digest may be 30 hours old')
+            self.assertEqual(watch.stale_watchers(now + 31 * 3600), 3)
             old = now - 4 * 3600
-            os.utime(self.state / 'ok-x', (old, old))
+            os.utime(self.state / 'ok-github', (old, old))
             self.assertEqual(watch.stale_watchers(now), 1)
             # what homebox-health reads: a known code and digits, nothing else
             out = self.state / 'status'
@@ -132,11 +132,11 @@ class Watchers(unittest.TestCase):
                     mock.patch.object(watch, 'catalog_age_hours', lambda: None):
                 watch.main()
                 self.assertEqual(out.read_text(), 'watchers_stale 1\n')
-                self.poll.good_run('x')
+                self.poll.good_run('github')
                 watch.main()
                 self.assertEqual(out.read_text(), '')
-        self.assertEqual(set(watch.WATCHERS), {'x', 'github', 'email', 'digest'})
-        for name, script in (('x', 'poll'), ('github', 'github_watch'), ('email', 'email_watch'), ('digest', 'digest')):
+        self.assertEqual(set(watch.WATCHERS), {'github', 'email', 'digest'}, 'X mentions watcher off since 2026-11-19')
+        for name, script in (('github', 'github_watch'), ('email', 'email_watch'), ('digest', 'digest')):
             self.assertIn(f'good_run("{name}")', (ROOT / f'x/{script}.py').read_text(), f'{script} leaves its mark')
 
 
