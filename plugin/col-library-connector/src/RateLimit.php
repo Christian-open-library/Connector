@@ -15,7 +15,11 @@
  * search keeps working for them, without re-ranking, until 00:00 UTC.
  *
  * A person also has a daily count of passages from documents used by permission (link_licensed:<id>,
- * takeLicensed; src/Licensed.php).
+ * takeLicensed; src/Licensed.php), and of passages read_passage and exact-mode search gave them in full
+ * (link_read:<id>; readRefusal before, countRead after), with a mark on the days a request was refused for that
+ * limit (link_readcap:<id>). read_day counts every caller's passages.
+ * Counts only: nothing says what was read. readingReport() gives the owner key the last 7 days of these.
+ * Like the other day counters they are deleted after a week.
  *
  * Failure policy if the state database cannot be used: tool calls are allowed (the library keeps
  * working), Voyage is refused (no spending that is not counted) and passages of documents used by
@@ -44,6 +48,10 @@ final class RateLimit
     public const LINK_VOYAGE_DIVISOR = 5;
     /** Default max_voyage_tokens_per_person_per_day: about 90 re-ranked searches. */
     public const PERSON_VOYAGE_DEFAULT = 1_000_000;
+    /** Default max_read_passages_per_person_per_day (Config explains the number). */
+    public const READ_DEFAULT = 2000;
+    /** Tool calls in a day that make an account "heavy" in readingReport (80% of a signed-in account's 500). */
+    public const HEAVY_CALLS = 400;
 
     /** Why the last reserveVoyage() refused: 'person', 'pool' or 'shared' (null if it did not refuse). */
     public ?string $lastRefusal = null;
@@ -63,6 +71,7 @@ final class RateLimit
         private readonly ?array $link = null,
         private readonly int $personVoyageTokensPerDay = self::PERSON_VOYAGE_DEFAULT,
         private readonly int $licensedPerDay = Licensed::PER_DAY_DEFAULT,
+        private readonly int $readPerDay = self::READ_DEFAULT,
     ) {
     }
 
@@ -79,6 +88,7 @@ final class RateLimit
             $link,
             $config->maxVoyageTokensPerPersonPerDay(),
             $config->maxLicensedPassagesPerPersonPerDay(),
+            $config->maxReadPassagesPerPersonPerDay(),
         );
     }
 
@@ -264,6 +274,115 @@ final class RateLimit
             $this->log?->error('ratelimit_unavailable', ['op' => 'takeLicensed', 'error' => $e->getMessage()]);
             return 0;
         }
+    }
+
+    /** Passages read_passage and exact-mode search may give one person in full per UTC day. */
+    public function readPerDay(): int
+    {
+        return $this->readPerDay;
+    }
+
+    /** Where a refused reading request came from: read_passage, or search_library in exact mode. */
+    public const READ_TOOL = 'read';
+    public const READ_EXACT = 'exact';
+
+    /**
+     * Before the work of a reading request (read_passage, or search_library in mode "exact", which pages through
+     * a work in book order): null if this person may still read today, else why not. A personal link or
+     * signed-in account that has already had its daily number is refused, and that day is marked for
+     * readingReport (link_readcap:<id>), so only a refused request marks it: 500 ordinary reads (4 passages each,
+     * 2,000 in all) never do. The owner key is never refused. If the store can't be used, the request goes ahead
+     * (as takeCall does: the library keeps working) and that is logged.
+     * @param string $what self::READ_TOOL or self::READ_EXACT (the wording of the refusal)
+     */
+    public function readRefusal(string $what = self::READ_TOOL): ?string
+    {
+        if ($this->link === null) {
+            return null;
+        }
+        $now = $this->now();
+        $day = intdiv($now, 86400);
+        try {
+            return $this->write(function (\PDO $db) use ($day, $now, $what): ?string {
+                $had = $this->value($db, 'link_read:' . $this->link['id'], $day);
+                if ($had < $this->readPerDay) {
+                    return null;
+                }
+                if ($this->value($db, 'link_readcap:' . $this->link['id'], $day) === 0) {
+                    $this->add($db, 'link_readcap:' . $this->link['id'], $day, 1);
+                }
+                $hours = max(1, (int) ceil((86400 - $now % 86400) / 3600));
+                return 'Daily reading limit reached: this account has read ' . number_format($had)
+                    . ' passages in full today, and one account may read ' . number_format($this->readPerDay)
+                    . ' a day' . ($what === self::READ_EXACT ? ' (exact-mode search counts too, as it pages through books)' : '')
+                    . '. ' . ($what === self::READ_EXACT ? 'Searching in the normal mode ("best") still works.' : 'Searching still works.')
+                    . ' The limit resets at 00:00 UTC, in about ' . $hours
+                    . ' hour' . ($hours === 1 ? '' : 's') . '. The library is for study and quotation, not '
+                    . 'for copying books: to read a whole work, open its "Copied from" link. To ask for more, '
+                    . 'write to hello@christianopenlibrary.org.';
+            });
+        } catch (\Throwable $e) {
+            $this->log?->error('ratelimit_unavailable', ['op' => 'readRefusal', 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * After a reading request: counts the $n passages it actually gave in full (after any trimming) against this
+     * person's day (link_read:<id>) and everyone's (read_day). The request was allowed by readRefusal, so a day's
+     * count can end over the limit by what requests already under way give (one request: at most 21 passages; a
+     * burst: at most a minute's calls_per_minute requests). Counts only: nothing says
+     * which passages. A write failure is logged; the passages were already given.
+     */
+    public function countRead(int $n): void
+    {
+        if ($n <= 0) {
+            return;
+        }
+        $day = intdiv($this->now(), 86400);
+        try {
+            $this->write(function (\PDO $db) use ($n, $day): void {
+                if ($this->link !== null) {
+                    $this->add($db, 'link_read:' . $this->link['id'], $day, $n);
+                }
+                $this->add($db, 'read_day', $day, $n);
+            });
+        } catch (\Throwable $e) {
+            $this->log?->error('ratelimit_unavailable', ['op' => 'countRead', 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * For the owner key only (Mcp, method library/reading; homebox's deploy/reading.py): the last 7 UTC days of
+     * reading counts. days: the day numbers, oldest first; read: passages read_passage and exact-mode search gave
+     * on each (everyone); capped: id => days that id was refused for its reading limit; heavy: id => days it made HEAVY_CALLS or more tool
+     * calls. Ids are the made-up ones (u + 12 hex for an account, a personal link's id), never names or emails.
+     */
+    public function readingReport(): array
+    {
+        $today = intdiv($this->now(), 86400);
+        $days = range($today - 6, $today);
+        $db = $this->db();
+        $read = array_map(fn (int $d): int => $this->value($db, 'read_day', $d), $days);
+        $capped = [];
+        $heavy = [];
+        $st = $db->prepare("SELECT name, period FROM counters WHERE period BETWEEN ? AND ? AND (
+                (name LIKE 'link^_readcap:%' ESCAPE '^' AND value >= 1) OR (name LIKE 'link^_day:%' ESCAPE '^' AND value >= ?))
+            ORDER BY period");
+        $st->execute([$days[0], $today, self::HEAVY_CALLS]);
+        foreach ($st->fetchAll(\PDO::FETCH_NUM) as [$name, $period]) {
+            [$kind, $id] = explode(':', (string) $name, 2);
+            if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $id)) {
+                continue;
+            }
+            if ($kind === 'link_readcap') {
+                $capped[$id][] = (int) $period;
+            } else {
+                $heavy[$id][] = (int) $period;
+            }
+        }
+        return ['days' => $days, 'read' => $read, 'read_limit' => $this->readPerDay, 'heavy_calls' => self::HEAVY_CALLS,
+                'capped' => (object) $capped, 'heavy' => (object) $heavy];
     }
 
     /** True if the daily Voyage token budget has room for about $estimatedTokens more. */

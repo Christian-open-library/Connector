@@ -15,6 +15,7 @@ final class Context
         public readonly RateLimit $limits,
         public readonly Log $log,
         public readonly float $deadline,   // microtime(true) by which the tool must finish
+        public readonly bool $owner = false,   // the request came with the owner's url_key (Http::process)
     ) {
     }
 

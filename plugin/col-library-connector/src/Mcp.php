@@ -78,6 +78,9 @@ final class Mcp
     public const HEADER_MISMATCH = -32020;
     public const UNSUPPORTED_VERSION = -32022;
 
+    /** Reading counts for the owner key (RateLimit::readingReport); not a tool, not listed. */
+    public const READING_METHOD = 'library/reading';
+
     /** initialize / server/discover instructions (claude.ai currently does not pass them to the model). */
     public const INSTRUCTIONS = 'The Christian Open Library: over 7,600 public-domain works, mostly Christian, from the '
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
@@ -287,6 +290,13 @@ final class Mcp
                     break;
                 case 'subscriptions/listen':
                     return $this->listen($params, $idJson, $ctx);
+                case self::READING_METHOD:
+                    if (!$ctx->owner) {   // the same answer as any unknown method
+                        return $this->fail($ctx, 404, $idJson, self::METHOD_NOT_FOUND, 'Method not found: ' . self::clip($method));
+                    }
+                    $result = $ctx->limits->readingReport();
+                    $error = null;
+                    break;
                 default:
                     // Includes the legacy-only methods (initialize, ping, logging/setLevel).
                     return $this->fail($ctx, 404, $idJson, self::METHOD_NOT_FOUND, 'Method not found: ' . self::clip($method));
@@ -378,6 +388,9 @@ final class Mcp
                 'ping' => [new \stdClass(), null],
                 'tools/list' => $this->listTools($params, false),
                 'tools/call' => $this->callTool($params, $ctx),
+                // The owner key only (homebox's deploy/reading.py); anyone else gets "Method not found" like any unknown method.
+                self::READING_METHOD => $ctx->owner ? [$ctx->limits->readingReport(), null]
+                    : [null, [self::METHOD_NOT_FOUND, 'Method not found: ' . self::clip($method)]],
                 // logging/setLevel, resources/*, prompts/*, completion/*: capabilities not declared.
                 default => [null, [self::METHOD_NOT_FOUND, 'Method not found: ' . self::clip($method)]],
             };

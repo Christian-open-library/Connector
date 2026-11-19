@@ -114,11 +114,11 @@ final class OAuth
         return $claims;
     }
 
-    /** May this signed-in user use the connector? Blocked: never. members_only: only members. Else: yes. */
+    /** May this signed-in user use the connector? Blocked or paused: no. members_only: only members. Else: yes. */
     public function allowed(string $sub): bool
     {
         $lists = $this->lists();
-        if ($lists !== null && isset($lists['blocked'][$sub])) {
+        if ($lists !== null && (isset($lists['blocked'][$sub]) || isset($lists['paused'][$sub]))) {
             return false;
         }
         if (!$this->membersOnly()) {
@@ -132,6 +132,19 @@ final class OAuth
         return ($this->s['members_only'] ?? true) !== false;
     }
 
+    /** True if homebox paused this account for reading far more than study needs (deploy/reading.py). */
+    public function isPaused(string $sub): bool
+    {
+        $lists = $this->lists();
+        return $lists !== null && isset($lists['paused'][$sub]);
+    }
+
+    public function pausedMessage(): string
+    {
+        return 'This account is paused: it read far more of the library in a short time than study and quotation '
+            . 'need. If you think this is a mistake, write to hello@christianopenlibrary.org.';
+    }
+
     /** True if homebox's member list has this WorkOS user (whatever members_only says). */
     public function isMember(string $sub): bool
     {
@@ -139,11 +152,16 @@ final class OAuth
         return $lists !== null && isset($lists['members'][$sub]);
     }
 
-    /** {members, blocked} as sets from members.json, or null (with a log line) if missing or unreadable. */
+    /** {members, blocked, paused} as sets from members.json, or null (with a log line) if missing or unreadable.
+     *  "paused" is optional, and only entries shaped like WorkOS user ids count (the deploy account checks the
+     *  other two lists, not this one); a "paused" that isn't a list is logged and treated as empty. */
     private function lists(): ?array
     {
         $path = $this->s['members_file'];
         static $cache = [];
+        // PHP may answer filemtime from its stat cache, missing a list homebox has just replaced in a long-lived
+        // process (and in the tests, on some PHP versions): ask the file system each time.
+        clearstatcache(true, $path);
         $mtime = @filemtime($path);
         if ($mtime === false) {
             if ($this->membersOnly()) {
@@ -157,8 +175,16 @@ final class OAuth
                 error_log('col-library-connector: unreadable member list at ' . $path);
                 return null;
             }
+            if (!is_array($d['paused'] ?? [])) {
+                // A bad "paused" must not switch off the block list (or, members-only, shut everyone out): no one is paused.
+                error_log('col-library-connector: "paused" in the member list at ' . $path . ' is not a list; ignored');
+                $d['paused'] = [];
+            }
             $set = static fn (array $l): array => array_fill_keys(array_filter($l, 'is_string'), true);
-            $cache[$path] = [$mtime, ['members' => $set($d['members']), 'blocked' => $set($d['blocked'] ?? [])]];
+            $ids = static fn (array $l): array => array_values(array_filter($l,
+                static fn ($x): bool => is_string($x) && preg_match(self::SUB, $x) === 1));
+            $cache[$path] = [$mtime, ['members' => $set($d['members']), 'blocked' => $set($d['blocked'] ?? []),
+                'paused' => $set($ids($d['paused'] ?? []))]];
         }
         return $cache[$path][1];
     }

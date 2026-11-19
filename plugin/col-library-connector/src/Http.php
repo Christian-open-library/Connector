@@ -217,10 +217,12 @@ final class Http
         }
         $link = $oauth->principal($claims['sub']);
         if (!$oauth->allowed($claims['sub'])) {
+            $paused = $oauth->isPaused($claims['sub']);
             $blocked = !$oauth->membersOnly() || $oauth->isMember($claims['sub']);
-            $log->with(['link' => $link['id']])->info('auth', ['status' => 403, 'reason' => $blocked ? 'blocked' : 'not a member']);
+            $log->with(['link' => $link['id']])->info('auth', ['status' => 403,
+                'reason' => $paused ? 'paused' : ($blocked ? 'blocked' : 'not a member')]);
             return Response::json(403, Mcp::errorJson(null, Mcp::INVALID_REQUEST,
-                $blocked ? $oauth->blockedMessage() : $oauth->notMemberMessage()));
+                $paused ? $oauth->pausedMessage() : ($blocked ? $oauth->blockedMessage() : $oauth->notMemberMessage())));
         }
         return self::handle($method, $query, $headers, $body, $config, $mcp, $link);
     }
@@ -282,7 +284,8 @@ final class Http
             if ($type !== 'application/json') {
                 return self::reject($log, 415, 'Unsupported Media Type: Content-Type must be application/json', ['type' => mb_substr($type, 0, 100)]);
             }
-            $ctx = new Context($config, RateLimit::fromConfig($config, $log, $link), $log, $started + self::TOOL_SECONDS);
+            $ctx = new Context($config, RateLimit::fromConfig($config, $log, $link), $log, $started + self::TOOL_SECONDS,
+                $link === null);
             return ($mcp ?? new Mcp())->handle($method, $headers, $body, $ctx);
         } catch (\Throwable $e) {
             $log->error('internal_error', [

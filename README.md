@@ -44,7 +44,7 @@ Each search result is marked as an exact, close, partial or loose match. "Close"
 - **No user data:** the connector keeps no copy of conversations or documents. Sign-in accounts are held by WorkOS, not by the connector.
 - **Logs:** they record the method, status and timing, with a pseudonymous id per person (part of a hash). Search text isn't logged unless debugging is turned on, and keys are always removed.
 - **Your questions:** to search by meaning, the search words are sent to Voyage AI. The library's Voyage account is opted out of data use. Voyage deletes them after processing. [What happens to your question](https://github.com/Christian-open-library/.github/blob/main/PRIVACY.md) lists everyone who sees it.
-- **Limits:** each person has a daily limit, and a daily cap keeps search spending in check.
+- **Limits:** each person has daily limits on requests and on passages read in full (2,000 a day from `read_passage` and exact-mode search together; counts only, not which passages), and a daily cap keeps search spending in check. An account that reads far more of the library than study needs is paused until the library looks.
 
 ## Security
 

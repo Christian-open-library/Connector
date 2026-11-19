@@ -367,6 +367,11 @@ final class Tools
         $limit = self::integer($args, 'limit', 1, 20, 8);
         $offset = self::integer($args, 'offset', 0, 1000, 0);
         $filters = self::filters($args, true);
+        // Exact mode pages through a work in book order, 20 full passages a call: it shares read_passage's daily
+        // reading limit (RateLimit::readRefusal, then countRead below). Mode "best" is ranked and can't page.
+        if ($mode === 'exact' && ($refusal = $ctx->limits->readRefusal(RateLimit::READ_EXACT)) !== null) {
+            return self::error($refusal);
+        }
         $store = new Store($ctx->config->dataDir());
         $keep = $ctx->config->get('vector_prefilter_keep', 1.0);
         $search = new Search($store, Voyage::forBuild($ctx, $store), $ctx->deadline, $ctx->config->nprobe(),
@@ -403,6 +408,9 @@ final class Tools
             $result = new SearchResult($result->query, $result->mode, $result->method,
                 self::withContext($result->hits, $store), $result->notes, $result->offset, $result->total,
                 $result->totalCapped);
+            if ($mode === 'exact') {
+                $ctx->limits->countRead(count($result->hits));   // the passages given in full
+            }
         }
         return $result->hits === [] ? self::error(Format::noResults($result)) : self::ok(Format::search($result));
     }
@@ -475,6 +483,12 @@ final class Tools
         if (!$hasRef && ($workId === null || $page === null)) {
             throw new ArgumentException('Give ref (e.g. "P1234500017"), or work_id together with page '
                 . '(e.g. work_id 12345 and page "23").');
+        }
+        // The daily reading limit (RateLimit::readRefusal, then countRead below): one person can't copy the
+        // library through this tool.
+        $refusal = $ctx->limits->readRefusal(RateLimit::READ_TOOL);
+        if ($refusal !== null) {
+            return self::error($refusal);
         }
         $store = new Store($ctx->config->dataDir());
         $notes = [];
@@ -566,6 +580,8 @@ final class Tools
         }
         $text = Format::readPassage($work, array_merge($earlier, [$passage], $later), $passage['id'],
             $previousId, $nextId, $notes);
+        // The daily reading count: what was actually given, after any trimming above (RateLimit::countRead).
+        $ctx->limits->countRead(1 + count($earlier) + count($later));
         return self::ok($text);
     }
 

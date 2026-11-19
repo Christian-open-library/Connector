@@ -341,4 +341,41 @@ function test_open_to_anyone_signed_in_except_blocked(): void
     assert_contains('unreadable member list', substr(col_error_log(), $before));
 }
 
+function test_paused_accounts_are_refused_with_their_own_message(): void
+{
+    // Each step gets its own member list in its own folder, so nothing depends on file times or caching.
+    $with = function (array $list): array {
+        $dir = col_tmpdir('oauth');
+        file_put_contents("$dir/members.json", json_encode($list));
+        $o = new OAuth(['members_only' => false] + settings($dir), $dir,
+            fn (): string => json_encode(['keys' => [keypair('k1')[1]]]), fn (): int => NOW);
+        return [$o, config($dir)];
+    };
+    // homebox's deploy/reading.py adds an account to "paused"; entries not shaped like a WorkOS id are ignored.
+    [$o, $c] = $with(['members' => [], 'blocked' => [], 'paused' => [SUB, 'not an id', 5]]);
+    assert_true($o->isPaused(SUB));
+    assert_false($o->isPaused('not an id'));
+    $r = bearer($c, $o, 'Bearer ' . token());
+    assert_same(403, $r->status, 'paused');
+    assert_contains('This account is paused', $r->body);
+    assert_contains('hello@christianopenlibrary.org', $r->body);
+    assert_not_contains("can't use the Christian Open Library connector", $r->body);
+    // Taken off the list: in again.
+    [$o, $c] = $with(['members' => [], 'blocked' => [], 'paused' => []]);
+    assert_same(200, bearer($c, $o, 'Bearer ' . token())->status, 'unpaused');
+    // No "paused" key at all (an older homebox): nobody is paused.
+    [$o, $c] = $with(['members' => [], 'blocked' => []]);
+    assert_false($o->isPaused(SUB));
+    assert_same(200, bearer($c, $o, 'Bearer ' . token())->status, 'no paused key');
+    // A "paused" that isn't a list pauses nobody and does not switch off the block list.
+    $before = strlen(col_error_log());
+    [$o, $c] = $with(['members' => [], 'blocked' => [SUB], 'paused' => 'oops']);
+    $r = bearer($c, $o, 'Bearer ' . token());
+    assert_same(403, $r->status, 'still blocked');
+    assert_contains("can't use the Christian Open Library connector", $r->body);
+    assert_contains('is not a list; ignored', substr(col_error_log(), $before));
+    [$o, $c] = $with(['members' => [], 'blocked' => [], 'paused' => ['a' => SUB]]);
+    assert_true($o->isPaused(SUB), 'a JSON object of ids still counts its values');
+}
+
 }

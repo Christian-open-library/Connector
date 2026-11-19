@@ -34,6 +34,11 @@ final class Config
         'max_voyage_tokens_per_person_per_day' => 1_000_000,
         // Passages of documents used by permission (the licensed shelf) one person may be given per UTC day (Licensed).
         'max_licensed_passages_per_person_per_day' => 100,
+        // Passages read_passage and exact-mode search_library may give one person (account or personal link) in full
+        // per UTC day (RateLimit::readRefusal and countRead).
+        // 2,000 = a signed-in account's 500 calls a day x read_passage's default 4 passages (1 before, the passage,
+        // 2 after), so ordinary use stays under it; reading whole books 20 or 21 passages at a time doesn't (2026-11-19).
+        'max_read_passages_per_person_per_day' => 2000,
         // Passages sent to the reranker per search, and characters of each (Search). These set what a
         // search costs: about rerank_candidates x rerank_doc_chars / 3.7 tokens (50 x 800: ~10,700, measured 2026-11-13).
         'rerank_candidates'         => 50,
@@ -73,6 +78,7 @@ final class Config
         'max_voyage_tokens_per_day' => [0, 1_000_000_000_000],
         'max_voyage_tokens_per_person_per_day' => [1, 1_000_000_000_000],
         'max_licensed_passages_per_person_per_day' => [0, 1_000_000],
+        'max_read_passages_per_person_per_day' => [0, 100_000_000],
         'rerank_candidates'         => [2, 1000],
         'rerank_doc_chars'          => [200, 20000],
         'public_check_visitor_per_minute' => [0, 10_000],
@@ -383,6 +389,11 @@ final class Config
     public function maxLicensedPassagesPerPersonPerDay(): int
     {
         return $this->values['max_licensed_passages_per_person_per_day'];
+    }
+
+    public function maxReadPassagesPerPersonPerDay(): int
+    {
+        return $this->values['max_read_passages_per_person_per_day'];
     }
 
     public function rerankCandidates(): int

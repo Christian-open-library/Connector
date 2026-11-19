@@ -3,7 +3,7 @@
 Christian-open-library organization) and blocked accounts. Since 2026-11-10 anyone signed in may use the
 connector (oauth.php members_only false) except blocked accounts; the member list stays for later use.
 
-    python3 -I deploy/members.py json           print {"members": [...], "blocked": [...]} (WorkOS user ids)
+    python3 -I deploy/members.py json           print {"members": [...], "blocked": [...], "paused": [...]} (WorkOS user ids)
     python3 -I deploy/members.py signups        print the account count and the change since the last day recorded
     python3 -I deploy/members.py list           who signed in: members, others, blocked
     python3 -I deploy/members.py block LOGIN    block a GitHub account or an email address (then: deploy/deploy-office.sh members)
@@ -112,6 +112,17 @@ def _dupes():
     return dupes
 
 
+def _paused():
+    """WorkOS ids paused for heavy reading by deploy/reading.py, where it is present (kept out of the public
+    copy like dupes.py); [] elsewhere. If its paused.json exists but can't be read this raises, so `json` fails
+    and deploy-office.sh sends nothing: the server keeps its list instead of letting every paused account in."""
+    try:
+        import reading
+    except ModuleNotFoundError:
+        return []
+    return reading.paused_ids()
+
+
 def dupe_rows():
     """Rows for dupes.py dry-run."""
     return _rows(*_with_ids())
@@ -173,7 +184,8 @@ def main():
         allowed, others, banned = compute()
         record_signups(len(allowed) + len(others))
         print(json.dumps({'members': sorted(uid for uid, _, _ in allowed),
-                          'blocked': sorted(uid for uid, _, _ in banned)}, indent=1))
+                          'blocked': sorted(uid for uid, _, _ in banned),
+                          'paused': _paused()}, indent=1))
     elif cmd == 'signups':
         print(signup_line() or 'no sign-up history yet')
     elif cmd == 'list':

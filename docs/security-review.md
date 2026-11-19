@@ -1,6 +1,6 @@
 # Security reviews
 
-*Newest first: 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
+*Newest first: 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
 website; everything changed since 10 November)
 and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
@@ -15,6 +15,39 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 19 November 2026: a daily reading limit
+
+Question checked: could someone have an AI app copy the whole library through the connector? One signed-in account
+could make 500 requests a day. `read_passage` gives up to 21 passages a request, and `search_library` in exact mode
+gives up to 20 a request in book order, paging through a work. So one account could gather about 10,500 passages a
+day, enough to copy everything in about 443 days.
+
+The change adds a daily reading limit for each person: 2,000 passages in full a day, from `read_passage` and
+exact-mode search together. That is 500 requests at `read_passage`'s default of 4 passages, so ordinary use stays
+under it. Reading whole books meets it after about 100 requests. One account would now need about 6.4 years to
+copy everything. The connector keeps a count for each made-up ID each day, never which passages; the counts are
+deleted after a week like the other limit counts. A day is marked when a request is refused for the limit.
+Homebox reads the last 7 days of these counts through a method only the owner's key can call. It pauses an
+account that keeps being refused (sign-in is refused with its own message, until Matt lets it back in) and tells
+Matt.
+
+A review (Claude) read the change before release. **It found 10 issues and all were fixed before release; 4
+things are accepted.** Four were in the connector's code and six in the private homebox script that reads the
+counts.
+
+| Issue | Status |
+|---|---|
+| Exact-mode search could page through a book in order, 20 full passages a request, without being counted. | **Fixed:** it shares the same daily reading limit (`tests/php/reading_test.php`). |
+| A "paused" list that wasn't a list made the whole member file unreadable, which would have let blocked accounts back in. | **Fixed:** a bad "paused" list is logged and pauses nobody; the block list still works (`tests/php/oauth_test.php`). |
+| Reaching the limit exactly (500 ordinary reads) marked the day, as if the person had been stopped. | **Fixed:** only a refused request marks a day. |
+| A read of a document used by permission was counted before it was trimmed or refused, so it used up more than it gave. | **Fixed:** only the passages actually given are counted. |
+| Six issues in the homebox script: it wasn't scheduled; some alerts would repeat every half hour; a pause alert could be lost if sending it failed; a change made while the list was being sent could be overwritten; an unreadable pause file would have let everyone back in; and its test would have been published with the rules it keeps private. | **Fixed:** it runs from cron every 30 minutes; each thing is said once; an alert that fails is sent again on the next run; one run at a time; a bad pause file stops the push, so the server keeps its list; the test stays private. |
+| The owner-only method (`library/reading`) must not answer anyone else, or say that it exists. | **Checked:** only a request with the owner's URL key gets it. A signed-in account, a personal link and the website's search get the same "Method not found" as any unknown method. It returns counts and made-up IDs, no names, emails or text. |
+| The check comes before a request and the count after it, so requests already under way when the limit is reached still finish. | **Accepted:** a signed-in account can make 30 requests a minute, so one burst could go over by at most about 630 passages, once a day. |
+| If the count can't be written, passages are still given. | **Accepted:** as for the request limit, the library keeps working when its counter store fails; the failure is logged. |
+| Search in the normal mode is not counted: 500 searches of up to 20 passages each could gather up to 10,000 passages a day. | **Accepted:** those answers are ranked by the words asked and can't be paged, so they can't walk through a book in order. |
+| Many accounts with unrelated email addresses could each read up to the limit. | **Accepted, watched:** about 330 accounts would be needed to copy everything in a week. Homebox alerts Matt when everyone together reads far more than usual in a day. |
 
 ## 16 November 2026, later: the Browse page's search in the books
 
