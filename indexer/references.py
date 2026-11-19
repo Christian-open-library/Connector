@@ -547,6 +547,21 @@ def dict_head(m) -> str:
             s = s[:-len(tail)]
             break
     return s.rstrip()
+WILSON_WRAP_RE = re.compile(r'\*;;+\s*(.*?)[\s;]*\*')
+
+
+def wilson_line(line: str) -> str:
+    """One line of a dictionary entry without the 1661 Wilson's paragraph marks: each paragraph is
+    "*;;2. The strength of the wicked ...*" (the ";;" and the italics wrapping the whole paragraph
+    come from the transcription, not the book), and stray ";;" sit inside some lines."""
+    m = WILSON_WRAP_RE.fullmatch(line)
+    if m and '*' not in m.group(1):
+        line = m.group(1)
+    elif line.startswith(('*;;', ';;')):
+        line = line.replace(';;', '', 1)
+    return re.sub(r'\s*;;+\s*', ' ', line).strip()
+
+
 COLES_RE = re.compile(r'^\*([^*]{1,60}?)[,.]?\s*(?:[a-zA-Z]{1,3}\.)?\*\s*(.+)$')
 
 
@@ -566,9 +581,8 @@ def add_markdown_dictionaries(db: sqlite3.Connection, repo: Path, work_ids: dict
         def emit():
             nonlocal count
             if head and body:
-                text = '\n'.join(body).strip()
+                text = '\n'.join(wilson_line(b) for b in body).strip()
                 text = re.sub(r'\[\^[^\]]+\]', '', text)
-                text = re.sub(r'^\*?;;\s*', '', text)      # 1661 Wilson: "*;;is the free ..."
                 text = corpus.clip_text(corpus.clean_inline(text).strip(), MAX_ENTRY_CHARS)
                 if not text:
                     return
@@ -623,6 +637,24 @@ def rebuild_bible(build_dir: Path, repo: Path = REPO):
     db.close()
 
 
+def rebuild_markdown_dictionaries(build_dir: Path, repo: Path = REPO):
+    """Refresh only the entries of Wilson's and Coles's dictionaries in an existing build (their rows
+    have no topic_refs; the CCEL dictionaries are left as they are)."""
+    db = sqlite3.connect(build_dir / 'library.sqlite')
+    sources = tuple(MD_DICTS)
+    marks = ','.join('?' * len(sources))
+    assert not db.execute(f'SELECT 1 FROM topic_refs WHERE dictionary_id IN '
+                          f'(SELECT id FROM dictionary WHERE source IN ({marks})) LIMIT 1', sources).fetchone()
+    db.execute(f'DELETE FROM dictionary WHERE source IN ({marks})', sources)
+    work_ids = dict(db.execute('SELECT key, id FROM works'))
+    n = add_markdown_dictionaries(db, repo, work_ids, Modernizer(load_lexicon()))
+    total = db.execute('SELECT COUNT(*) FROM dictionary').fetchone()[0]
+    db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('n_dictionary_entries', ?)", (str(total),))
+    db.commit()
+    db.close()
+    print(f'markdown dictionaries: {n} entries ({total} in all)')
+
+
 def build(build_dir: Path, repo: Path = REPO, processes: int = 3, use_cache: bool = False):
     t0 = time.time()
     db = sqlite3.connect(build_dir / 'library.sqlite')
@@ -657,9 +689,13 @@ def main(argv=None):
     ap.add_argument('build_dir', type=Path)
     ap.add_argument('--processes', type=int, default=3)
     ap.add_argument('--only-bible', action='store_true', help='refresh just the Bible text tables')
+    ap.add_argument('--only-md-dictionaries', action='store_true',
+                    help="refresh just Wilson's and Coles's dictionary entries")
     args = ap.parse_args(argv)
     if args.only_bible:
         rebuild_bible(args.build_dir)
+    elif args.only_md_dictionaries:
+        rebuild_markdown_dictionaries(args.build_dir)
     else:
         build(args.build_dir, processes=args.processes)
 

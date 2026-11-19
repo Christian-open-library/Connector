@@ -319,6 +319,19 @@ final class Text
         return get_class($e) . ': ' . mb_substr((string) preg_replace('/"[^"]*"/u', '"…"', $e->getMessage()), 0, 300);
     }
 
+    /** What the reader sees for the transcribers' mark "[gap: foreign]". */
+    public const FOREIGN_GAP = '[non-Latin text not transcribed]';
+
+    /**
+     * Library text with the transcribers' "[gap: foreign]" in plain words. The EEBO-TCP transcribers left
+     * out words in Greek, Hebrew and other non-Latin alphabets, and marked each place (the text itself is
+     * unchanged in the library's copy).
+     */
+    public static function gaps(string $text): string
+    {
+        return str_contains($text, '[gap: foreign]') ? str_replace('[gap: foreign]', self::FOREIGN_GAP, $text) : $text;
+    }
+
     /**
      * Library text made inert for Markdown and HTML renderers, for every verbatim field of a tool
      * result (passage text, notes, labels, metadata, verses, dictionary entries): "![" and "]("
@@ -330,6 +343,7 @@ final class Text
         if (strpbrk($text, '[(<:') === false) {
             return $text;
         }
+        $text = self::gaps($text);
         // "![" and "](" start images and inline links; "]:" ends the label of a link reference definition
         // ("[label]: url", which turns "[text][label]" into a link), wherever it is (a quote or list too).
         // Page markers ("[p. 23]") and other brackets are untouched.

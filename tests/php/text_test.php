@@ -139,3 +139,11 @@ function test_log_message_drops_quoted_query_text(): void
     $e = new \PDOException('SQLSTATE[HY000]: General error: 1 fts5: syntax error near "secret words"');
     assert_same('PDOException: SQLSTATE[HY000]: General error: 1 fts5: syntax error near "…"', Text::logMessage($e));
 }
+
+function test_foreign_gap_mark_reads_as_plain_words(): void
+{
+    $out = Text::inert('the word [gap: foreign] signifies life');
+    assert_same('the word ' . Text::FOREIGN_GAP . ' signifies life', $out);
+    assert_same('[illegible] and [gap: 1 page]', Text::inert('[illegible] and [gap: 1 page]'), 'other marks unchanged');
+    assert_same('no marks here', Text::inert('no marks here'));
+}

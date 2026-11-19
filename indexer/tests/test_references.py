@@ -81,3 +81,15 @@ class NaveTorrey(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+
+class WilsonLineTest(unittest.TestCase):
+    def test_paragraph_marks_dropped(self):
+        from indexer.references import wilson_line
+        self.assertEqual(wilson_line('*;;2. The strength of the wicked, Psal. 7. 12.*'), '2. The strength of the wicked, Psal. 7. 12.')
+        self.assertEqual(wilson_line('*;;Childe is a word that signifieth;;;*'), 'Childe is a word that signifieth')
+        self.assertEqual(wilson_line('*;;1. The nature or kindred of man.;;*'), '1. The nature or kindred of man.')
+        self.assertEqual(wilson_line('*As being heirs,* 1 Pet. 3. 7.'), '*As being heirs,* 1 Pet. 3. 7.')
+        self.assertEqual(wilson_line('*;;Bow:* Referred to *God,* signifieth'), '*Bow:* Referred to *God,* signifieth')
+        self.assertEqual(wilson_line('*;;Bow:* Referred to *God,*'), '*Bow:* Referred to *God,*')

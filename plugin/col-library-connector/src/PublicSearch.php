@@ -252,7 +252,7 @@ final class PublicSearch
     /** The passage as plain text on one line: no page marks or emphasis, and no "[[" or "]]" of its own. */
     public static function clean(string $text): string
     {
-        return trim((string) preg_replace('/\s+/u', ' ', str_replace(['[[', ']]'], ['[', ']'], Text::plain($text))));
+        return trim((string) preg_replace('/\s+/u', ' ', str_replace(['[[', ']]'], ['[', ']'], Text::plain(Text::gaps($text)))));
     }
 
     /**
