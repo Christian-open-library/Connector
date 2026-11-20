@@ -1,6 +1,6 @@
 # Security reviews
 
-*Newest first: 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
+*Newest first: 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
 website; everything changed since 10 November)
 and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
@@ -15,6 +15,23 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 19 November 2026, later: a church's own documents first
+
+When someone names their church, the connector now lists that church's own present-day documents (shown by
+permission) ahead of the older records of the bodies it came from, in search, exact-phrase search, Bible citations
+and the list of works. Question checked: does this let anyone get more of those documents than before? No. The
+same limits apply: at most 3 passages of one such document in a request, and 100 a day for one person. Exact-phrase
+search lists at most 3 matches of each such document and 20 in all, which is no more than it gave before.
+
+A review (Claude) read the change before release. **It found 2 issues and both were fixed before release; 1 thing
+is accepted.**
+
+| Issue | Status |
+|---|---|
+| Once a person had used the day's 100 passages, the places given to their church's own documents came back empty, and a search could return an error instead of the older records. | **Fixed:** that person's church documents are not moved up until the next day, and a note says why (`tests/php/church_test.php`). |
+| Exact-phrase search listed all of a church's own matches first, so the limits above left page 2 empty. | **Fixed:** only the matches the limits allow are listed first, then the older records (`tests/php/church_test.php`). |
+| A member of a church with documents in the library meets the daily limit of 100 sooner, since those documents now come first. | **Accepted:** the limit is part of the terms on which the documents are shown. After it, the older records are still searched, with a note. |
 
 ## 19 November 2026: a daily reading limit
 

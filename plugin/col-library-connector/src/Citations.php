@@ -54,6 +54,9 @@ final class Citations
     public const TEXT_VERSES = 5;          // verses of the reference shown per translation
     private const MAX_CITES_SHOWN = 3;     // citations listed after each passage
 
+    /** As Search::$promoteOwn: false when this person's documents used by permission are used up for today. */
+    public bool $promoteOwn = true;
+
     public function __construct(
         private readonly Store $store,
         private readonly Bible $bible,
@@ -72,7 +75,7 @@ final class Citations
             throw new ArgumentException('Ask for at most ' . self::MAX_CHAPTERS . ' chapters at a time (for example "'
                 . $this->bible->label($first) . '").');
         }
-        ['ids' => $workIds, 'notes' => $notes] = $filters->resolve($this->store);
+        ['ids' => $workIds, 'notes' => $notes, 'own' => $own, 'own_body' => $ownBody] = $filters->resolve($this->store);
         $rows = [];
         $capped = false;
         foreach ($ref->segments() as [$chapter, $from, $to]) {
@@ -98,7 +101,15 @@ final class Citations
         foreach ($this->store->works(array_map('intval', array_keys($works))) as $id => $w) {
             $years[$id] = $w['year'];
         }
-        $order = self::order($passages, $years);
+        $ownWorks = $workIds !== null && count($own) < count($workIds) ? array_flip($own) : [];
+        if ($ownWorks !== [] && !$this->promoteOwn) {
+            $notes[] = Churches::ownCappedNote((string) $ownBody);
+            $ownWorks = [];
+        }
+        $order = self::order($passages, $years, $ownWorks);
+        if ($ownWorks !== [] && $ownBody !== null && array_intersect_key($works, $ownWorks) !== []) {
+            $notes[] = Churches::ownFirstNote($ownBody, 0);
+        }
         $hits = [];
         $page = array_slice($order, $offset, $limit);
         $cites = self::cites($rows, $passages, $page, $ref);
@@ -178,19 +189,20 @@ final class Citations
     }
 
     /**
-     * Passage ids in result order: group 1, then group 2; within each, works by year (unknown years
+     * Passage ids in result order: group 1, then group 2; within each, a named body's own present-day
+     * documents ($ownWorks, DESIGN.md section 11) before the others, then works by year (unknown years
      * last, ties by their first passage id), one passage per work per round, each work's passages
      * in id order.
      * @param array<int, array{work_id:int, group:int}> $passages by id
      * @param array<int, ?int> $years by work id
      * @return list<int>
      */
-    public static function order(array $passages, array $years): array
+    public static function order(array $passages, array $years, array $ownWorks = []): array
     {
         ksort($passages);
-        $byWork = [1 => [], 2 => []];
+        $byWork = [1 => [], 2 => [], 3 => [], 4 => []];   // group 1 own, 1 others, 2 own, 2 others
         foreach ($passages as $id => $p) {
-            $byWork[$p['group']][$p['work_id']][] = (int) $id;
+            $byWork[$p['group'] * 2 - (isset($ownWorks[$p['work_id']]) ? 1 : 0)][$p['work_id']][] = (int) $id;
         }
         $keys = [];   // passage id => (group, round, rank of its work) as one integer
         foreach ($byWork as $group => $works) {

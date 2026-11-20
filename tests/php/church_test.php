@@ -15,6 +15,7 @@ namespace ColLibraryTest\Church;
 
 use ColLibrary\Churches;
 use ColLibrary\Filters;
+use ColLibrary\Search;
 use ColLibrary\SearchInputException;
 use ColLibrary\Store;
 use ColLibrary\Tools;
@@ -147,8 +148,10 @@ function test_traditions_and_words_of_names(): void
     assert_same([101, 102, 103], allowed(null, 'Presbyterian'));
     assert_same([104], allowed(null, 'Methodist'));
     assert_same([101, 102, 103], allowed('Presbyterians'), 'a tradition named as a denomination');
-    assert_same([104], allowed('methodist episcopal'), 'words of a body\'s name');
-    assert_contains('No church body is named exactly "methodist episcopal"', notes('methodist episcopal'));
+    assert_same([104], allowed('methodist episcopal'), 'a body\'s name without "Church"');
+    assert_contains('Denomination "methodist episcopal": the records of the Methodist Episcopal Church', notes('methodist episcopal'));
+    assert_same([104], allowed('episcopal church'), 'words of a body\'s name');
+    assert_contains('No church body is named exactly "episcopal church"', notes('episcopal church'));
     assert_same([101], allowed('PCA', null, 1600, 1700), 'other filters still apply');
 }
 
@@ -555,4 +558,255 @@ function test_a_body_that_allows_only_links_gets_its_link_and_wording(): void
     assert_contains('United Reformed Churches', $urc);
     assert_not_contains('crcna.org', $urc, 'a body descended from the CRC does not get its link');
     assert_not_contains('crcna.org', notes('PCA'));
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Names people use (2026-11-19 denomination eval) and a body's own present-day documents first (DESIGN.md 11).
+
+function test_names_without_church_or_plural_s(): void
+{
+    assert_same([104], allowed('United Methodist'), 'a present-day name without "Church"');
+    assert_same([104], allowed('The United Methodist Churches'));
+    assert_same([101, 103], allowed('Orthodox Presbyterian'));
+    assert_contains('"Orthodox Presbyterian (the Orthodox Presbyterian Church)"', notes('Orthodox Presbyterian'));
+    assert_same([102], allowed('Southern Presbyterians'), 'another name with a plural s');
+    assert_same([104], allowed('Methodist'), 'a tradition stays a tradition');
+    assert_contains('the records of all 1 Methodist bodies', notes('Methodist'));
+    assert_same([101, 102, 103], allowed('Presbyterian church'), 'a tradition with "church"');
+    assert_throws(SearchInputException::class, fn () => allowed('Methodist Presbyterian Union'));
+    assert_same('unitedmethodist', Churches::looseKey('The United Methodist Church'));
+    assert_same('reformedbaptist', Churches::looseKey('Reformed Baptists'));
+}
+
+/**
+ * The licensed build with the URCNA as a present-day name that descends from the PCUSA (work 101, historical):
+ * its own documents 103 (current church order) and 104 (an official record) among the history.
+ */
+function own_dir(): string
+{
+    static $dir = null;
+    if ($dir !== null) {
+        return $dir;
+    }
+    $src = licensed_dir();
+    $dir = col_tmpdir('own');
+    foreach (['library.sqlite', 'vectors.bin', 'ids.bin', 'manifest.json', 'config.php'] as $f) {
+        if (is_file("$src/$f")) {
+            copy("$src/$f", "$dir/$f");
+        }
+    }
+    $db = new \PDO("sqlite:$dir/library.sqlite");
+    $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+    $db->prepare("INSERT INTO church_names VALUES ('United Reformed Churches in North America', ?, 'Reformed', ?, 1)")
+        ->execute([json_encode(['URCNA', 'URC']),
+                   json_encode([['Presbyterian Church in the United States of America', null, null]])]);
+    $db = null;
+    return $dir;
+}
+
+function own_call(string $tool, array $args): array
+{
+    return Tools::call($tool, $args, Fixture\context(['data_dir' => own_dir()]));
+}
+
+function test_resolve_gives_the_named_body_s_own_present_day_documents(): void
+{
+    $store = new Store(own_dir());
+    $r = (new Filters(denomination: 'URCNA'))->resolve($store);
+    $ids = $r['ids'];
+    sort($ids);
+    assert_same([101, 103, 104], $ids);
+    assert_same([103, 104], $r['own']);
+    assert_same('United Reformed Churches in North America', $r['own_body']);
+    assert_same([], (new Filters(denomination: 'PCUSA'))->resolve($store)['own'], 'no present-day documents');
+    assert_same([], (new Filters(tradition: 'Reformed'))->resolve($store)['own'], 'a tradition names no body');
+    assert_same([], (new Filters())->resolve($store)['own']);
+    assert_same([], (new Filters(denomination: 'URCNA', yearTo: 1700))->resolve($store)['own'], 'other filters apply');
+}
+
+function cand(int $work, ?float $score): array
+{
+    static $n = 0;
+    $n++;
+    return ['id' => $work * 100000 + $n, 'work_id' => $work] + ($score !== null ? ['score' => $score] : []);
+}
+
+function works_of(array $cands): array
+{
+    return array_map(static fn (array $c): int => $c['work_id'], $cands);
+}
+
+function test_own_passages_come_first_by_the_floors(): void
+{
+    $own = [7 => true];
+    // matching own passages (partial or better) first, in re-ranked order; the rest keep theirs
+    $c = [cand(1, 0.9), cand(7, 0.6), cand(2, 0.8), cand(7, 0.5), cand(7, 0.2)];
+    assert_same([7, 7, 1, 2, 7], works_of(Search::ownFirst($c, $own)));
+    // below the floor, or not scored: no change (a weak own passage is not pushed up: 2026-11-19 eval)
+    $c = [cand(1, 0.9), cand(2, 0.8), cand(3, 0.7), cand(7, 0.44), cand(7, null)];
+    assert_same([1, 2, 3, 7, 7], works_of(Search::ownFirst($c, $own)));
+    assert_same([1, 2], works_of(Search::ownFirst([cand(1, 0.9), cand(2, 0.8)], [])), 'no own works: unchanged');
+    assert_same(Search::MATCH_LOOSE, Search::OWN_FLOOR, 'the floor is the "partial" label');
+    // without re-ranking: every other place from the second
+    $c = [cand(1, null), cand(2, null), cand(7, null), cand(3, null), cand(7, null), cand(7, null), cand(7, null)];
+    assert_same([1, 7, 2, 7, 3, 7, 7], works_of(Search::ownInterleaved($c, $own)));
+}
+
+function test_search_lists_matching_own_documents_first(): void
+{
+    foreach (['God', 'mortification of sin', 'grace of God'] as $q) {
+        $r = own_call('search_library', ['query' => $q, 'denomination' => 'URCNA', 'limit' => 8]);
+        $text = Fixture\text_of($r);
+        assert_false($r['isError'], $text);
+        preg_match_all('/^\[\d+\] P(\d+) .*?(?:Match: (\w+[\w ]*))?$/m', $text, $m, PREG_SET_ORDER);
+        $seenOther = false;
+        foreach ($m as $hit) {
+            $own = in_array(intdiv((int) $hit[1], 100000), [103, 104], true);
+            $strong = in_array($hit[2] ?? '', ['close', 'partial', 'exact words'], true);
+            if ($own && $strong) {
+                assert_false($seenOther, "$q: a matching own passage after another body's: $text");
+            }
+            $seenOther = $seenOther || !$own;
+        }
+        assert_true(str_contains($text, 'itself (used by permission) are listed first')
+            || str_contains($text, 'itself matches this question well'), $text);
+    }
+    $r = call('search_library', ['query' => 'God', 'denomination' => 'PCA']);
+    assert_not_contains(Churches::OWN_NOTE, Fixture\text_of($r), 'no present-day documents: no note');
+}
+
+function test_other_tools_list_own_documents_first(): void
+{
+    $r = own_call('find_works', ['denomination' => 'URCNA']);
+    $text = Fixture\text_of($r);
+    assert_false($r['isError'], $text);
+    preg_match_all('/^\[\d+\] work_id (\d+)/m', $text, $m);
+    assert_same(['103', '104', '101'], $m[1], 'current edition, official record, then the history');
+    assert_contains('itself (used by permission) are listed first', $text);
+    $r = licensed_call('find_works', ['denomination' => 'URCNA']);
+    preg_match_all('/^\[\d+\] work_id (\d+)/m', Fixture\text_of($r), $m);
+    assert_same(['103', '104'], $m[1], 'only own documents: current first, no note');
+    assert_not_contains('listed first', Fixture\text_of($r));
+
+    $r = own_call('search_library', ['query' => 'God', 'mode' => 'exact', 'denomination' => 'URCNA', 'limit' => 20]);
+    $text = Fixture\text_of($r);
+    assert_false($r['isError'], $text);
+    assert_contains('(its own present-day documents first, then in book order)', $text);
+    $works = array_map(static fn (int $id): int => intdiv($id, 100000), shown_refs($text));
+    $firstOther = array_search(101, $works, true);
+    assert_true($firstOther !== false && $firstOther > 0, implode(',', $works));
+    assert_same([], array_filter(array_slice($works, (int) $firstOther), static fn (int $w): bool => $w !== 101),
+        'own matches before the others: ' . implode(',', $works));
+    $page2 = own_call('search_library', ['query' => 'God', 'mode' => 'exact', 'denomination' => 'URCNA', 'limit' => 2,
+        'offset' => 2]);
+    $all = own_call('search_library', ['query' => 'God', 'mode' => 'exact', 'denomination' => 'URCNA', 'limit' => 4]);
+    assert_same(array_slice(shown_refs(Fixture\text_of($all)), 2, 2), shown_refs(Fixture\text_of($page2)),
+        'paging walks own matches, then the rest');
+    $r = own_call('search_library', ['query' => 'God', 'mode' => 'exact', 'denomination' => 'PCUSA']);
+    assert_contains('(in book order)', Fixture\text_of($r));
+}
+
+function test_citations_list_own_documents_first_within_each_group(): void
+{
+    $p = [
+        1 => ['work_id' => 10, 'group' => 1], 2 => ['work_id' => 11, 'group' => 1], 3 => ['work_id' => 12, 'group' => 1],
+        4 => ['work_id' => 11, 'group' => 2], 5 => ['work_id' => 10, 'group' => 2], 6 => ['work_id' => 12, 'group' => 1],
+    ];
+    $years = [10 => 1700, 11 => 1800, 12 => 2026];
+    assert_same([1, 2, 3, 6, 5, 4], \ColLibrary\Citations::order($p, $years), 'earliest first');
+    assert_same([3, 6, 1, 2, 5, 4], \ColLibrary\Citations::order($p, $years, [12 => true]), 'own work 12 first in group 1');
+    assert_same([2, 1, 3, 6, 4, 5], \ColLibrary\Citations::order($p, $years, [11 => true]), 'in both groups');
+}
+
+function test_the_own_note_gives_way_to_the_daily_cap(): void
+{
+    $cfg = Fixture\config(['data_dir' => own_dir()]);
+    $log = \ColLibrary\Log::fromConfig($cfg);
+    $limits = new \ColLibrary\RateLimit($cfg->stateDir(), 100000, 1000000, $cfg->maxVoyageTokensPerDay(), $log,
+        fn () => Fixture\FIXED_TIME, null, \ColLibrary\RateLimit::PERSON_VOYAGE_DEFAULT, 0);
+    $ctx = new \ColLibrary\Context($cfg, $limits, $log, microtime(true) + 25.0);
+    assert_same(0, $limits->licensedLeft());
+    $r = Tools::call('search_library', ['query' => 'God', 'denomination' => 'URCNA', 'limit' => 8], $ctx);
+    $text = Fixture\text_of($r);
+    assert_false($r['isError'], $text);
+    assert_contains("this account has reached today's limit of passages from them, so the present-day documents of the "
+        . 'United Reformed Churches in North America itself are not listed first', $text);
+    assert_not_contains(Churches::OWN_NOTE, $text, 'no promise of documents the cap left out');
+    assert_true(in_array(101, array_map(static fn (int $id): int => intdiv($id, 100000), shown_refs($text)), true),
+        'the history is shown: ' . $text);
+    assert_same([], array_filter(shown_refs($text), static fn (int $id): bool => intdiv($id, 100000) !== 101));
+    $r = Tools::call('find_scripture_citations', ['reference' => 'Romans 8', 'denomination' => 'URCNA'], $ctx);
+    assert_not_contains(Churches::OWN_NOTE, Fixture\text_of($r));
+}
+
+function test_own_candidates_always_reach_the_reranker(): void
+{
+    $store = new Store(own_dir());
+    foreach ([2, 50] as $rc) {
+        $search = new Search($store, Fixture\fake_voyage($store), microtime(true) + 25.0, 8, null, 1.0,
+            Search::EXACT_SCAN_MAX, $rc);
+        $search->best('the grace of God and the knowledge of God', new Filters(denomination: 'URCNA'), 5);
+        assert_true(isset($search->trace['own_best']), "rerank_candidates $rc: own passages were scored");
+        assert_same(Search::OWN_TOP <= 7 ? Search::OWN_TOP : 7, min($search->trace['own_candidates'], 7));
+    }
+}
+
+function test_exact_mode_lists_a_few_of_each_own_document_then_the_history(): void
+{
+    $r = own_call('search_library', ['query' => 'God', 'mode' => 'exact', 'denomination' => 'URCNA', 'limit' => 20]);
+    $text = Fixture\text_of($r);
+    $works = array_map(static fn (int $id): int => intdiv($id, 100000), shown_refs($text));
+    $of103 = count(array_filter($works, static fn (int $w): bool => $w === 103));
+    assert_true($of103 >= 1 && $of103 <= \ColLibrary\Licensed::PER_WORK, $text);
+    assert_same(101, $works[count($works) - 1], 'the history after: ' . implode(',', $works));
+    assert_same(103, $works[0], 'the current edition first');
+    assert_contains('Own documents: the first matches in the present-day documents of the United Reformed Churches in '
+        . 'North America itself (used by permission) are listed first', $text);
+    assert_not_contains('left out', $text, 'nothing listed is then dropped by the licensed shelf\'s rules');
+    $r = own_call('search_library', ['query' => 'the', 'mode' => 'exact', 'denomination' => 'URCNA']);
+    assert_not_contains('Own documents', Fixture\text_of($r), 'a phrase of only common words: no promotion');
+}
+
+function test_a_present_day_name_that_is_a_body_includes_its_own_records(): void
+{
+    // The URCNA is a body (licensed_dir) and, in own_dir, a present-day name; "URC Synods" is an other name only
+    // on the present-day row: its own records must be searched too, not only its ancestors' (2026-11-19).
+    $dir = col_tmpdir('ownalias');
+    foreach (['library.sqlite', 'vectors.bin', 'ids.bin', 'manifest.json', 'config.php'] as $f) {
+        if (is_file(own_dir() . "/$f")) {
+            copy(own_dir() . "/$f", "$dir/$f");
+        }
+    }
+    $db = new \PDO("sqlite:$dir/library.sqlite");
+    $db->exec("UPDATE church_names SET aliases = '[\"URCNA\", \"URC\", \"URC Synods\"]'
+               WHERE name = 'United Reformed Churches in North America'");
+    $db = null;
+    $r = (new Filters(denomination: 'URC Synods'))->resolve(new Store($dir));
+    $ids = $r['ids'];
+    sort($ids);
+    assert_same([101, 103, 104], $ids);
+    assert_same([103, 104], $r['own']);
+}
+
+function test_find_works_lists_own_records_newest_first(): void
+{
+    $dir = col_tmpdir('ownyears');
+    foreach (['library.sqlite', 'vectors.bin', 'ids.bin', 'manifest.json', 'config.php'] as $f) {
+        if (is_file(own_dir() . "/$f")) {
+            copy(own_dir() . "/$f", "$dir/$f");
+        }
+    }
+    $db = new \PDO("sqlite:$dir/library.sqlite");
+    $db->exec("UPDATE church_records SET status = 'record' WHERE work_id = 103; UPDATE works SET year = 1999 WHERE id = 104");
+    $db = null;
+    $r = Tools::call('find_works', ['denomination' => 'URCNA'], Fixture\context(['data_dir' => $dir]));
+    preg_match_all('/^\[\d+\] work_id (\d+)/m', Fixture\text_of($r), $m);
+    assert_same(['103', '104', '101'], $m[1], 'records newest first (2026, 1999), then the history');
+    $db = new \PDO("sqlite:$dir/library.sqlite");
+    $db->exec("UPDATE works SET year = 2030 WHERE id = 104");
+    $db = null;
+    $r = Tools::call('find_works', ['denomination' => 'URCNA'], Fixture\context(['data_dir' => $dir]));
+    preg_match_all('/^\[\d+\] work_id (\d+)/m', Fixture\text_of($r), $m);
+    assert_same(['104', '103', '101'], $m[1]);
 }

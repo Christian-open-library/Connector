@@ -83,14 +83,15 @@ final class Filters
     }
 
     /**
-     * Ids of the works these filters allow (null when there are no filters), plus notes.
-     * @return array{ids: list<int>|null, notes: list<string>}
+     * Ids of the works these filters allow (null when there are no filters), plus notes, and the allowed works
+     * that are the named body's own present-day documents ('own', Churches::allowed; listed first by the tools).
+     * @return array{ids: list<int>|null, notes: list<string>, own: list<int>, own_body: ?string}
      * @throws SearchInputException when a work_id does not exist or nothing matches
      */
     public function resolve(Store $store): array
     {
         if (!$this->active()) {
-            return ['ids' => null, 'notes' => []];
+            return ['ids' => null, 'notes' => [], 'own' => [], 'own_body' => null];
         }
         $works = $store->allWorks();
         if ($this->workId !== null && !isset($works[$this->workId])) {
@@ -153,7 +154,8 @@ final class Filters
             }
             throw new SearchInputException($msg);
         }
-        return ['ids' => $ids, 'notes' => $notes];
+        $own = $church !== null ? array_values(array_intersect($church['own'], $ids)) : [];
+        return ['ids' => $ids, 'notes' => $notes, 'own' => $own, 'own_body' => $own !== [] ? $church['own_body'] : null];
     }
 
     /**
@@ -232,6 +234,16 @@ final class Search
     private const MIN_SECONDS_PHRASE = 6.0;
     public const FEW_WORKS = 3;       // a search limited to this many works is not capped
     public const FUSE_TOP = 50;
+    /**
+     * A named body's own present-day documents (Filters::resolve 'own'; DESIGN.md section 11) are searched on
+     * their own as well, and their best OWN_TOP passages join the passages sent to the reranker (in place of the
+     * last of the others, so a search costs the same). After re-ranking, own passages scoring at least OWN_FLOOR
+     * (the "partial" match label) come first. The reranker scores a body's present-day documents lower than the
+     * long digests of its history (a small body's own answers 0.39-0.65 against 0.75-0.86, 2026-11-19), which is why their
+     * place is a rule and not a score. Measured on tests/eval/denominations.jsonl: DESIGN.md section 11.
+     */
+    public const OWN_TOP = 10;
+    public const OWN_FLOOR = self::MATCH_LOOSE;
     public const KEYWORD_TOP = 100;
     public const VECTOR_TOP = 100;
     public const RELAX_BELOW = 30;
@@ -268,6 +280,13 @@ final class Search
     /** @var array<string,float|int|string|bool> timings and counts for the log */
     public array $trace = [];
 
+    /**
+     * False when this person may be given no more passages of documents used by permission today: then a
+     * named body's own documents are not put first (Licensed::limit would leave them out, and the places they
+     * took would be empty), and a note says so.
+     */
+    public bool $promoteOwn = true;
+
     public function __construct(
         private readonly Store $store,
         private readonly Voyage $voyage,
@@ -293,7 +312,13 @@ final class Search
             throw new SearchInputException('The query has no words to search for. Use words or a phrase, '
                 . 'for example "assurance of salvation".');
         }
-        ['ids' => $workIds, 'notes' => $notes] = $filters->resolve($this->store);
+        ['ids' => $workIds, 'notes' => $notes, 'own' => $own, 'own_body' => $ownBody] = $filters->resolve($this->store);
+        // Only when the filter also allows other works (a body's own documents among its history).
+        $own = $workIds !== null && count($own) < count($workIds) ? $own : [];
+        if ($own !== [] && !$this->promoteOwn) {
+            $notes[] = Churches::ownCappedNote((string) $ownBody);
+            $own = [];
+        }
 
         // A quotation: passages holding the whole query word for word come first.
         $phrase = $this->phraseHits($tokens, $workIds);
@@ -317,6 +342,7 @@ final class Search
         $vectorRan = false;
         $canRerank = $this->voyage->configured();
         $modern = $this->modernQuery($query);
+        $qv = null;
         $problem = $this->vectorProblem();
         if ($problem !== null) {
             $this->trace['vector'] = $problem;
@@ -347,7 +373,14 @@ final class Search
             }
         }
 
-        $fused = self::rrf([$keyword, $vector], self::RRF_K, max(self::FUSE_TOP, $this->rerankCandidates));
+        $pool = max(self::FUSE_TOP, $this->rerankCandidates);
+        $fused = self::rrf([$keyword, $vector], self::RRF_K, $pool);
+        $ownList = $own !== [] ? $this->ownList($tokens, $qv, $own) : [];
+        if ($ownList !== []) {
+            // At the front: only the first rerank_candidates (after any quotation hits) are sent to the reranker.
+            $rest = array_values(array_diff($fused, $ownList));
+            $fused = array_merge($ownList, array_slice($rest, 0, max(0, $pool - count($ownList))));
+        }
         if ($phrase !== []) {
             $fused = array_values(array_unique(array_merge($phrase, $fused)));
         }
@@ -362,7 +395,10 @@ final class Search
                 try {
                     $t = microtime(true);
                     $docs = array_column(array_slice($cands, 0, max(2, $this->rerankCandidates)), 'doc');
-                    $order = $this->voyage->rerank($modern, $docs, min(count($docs), $limit * 2), $this->deadline);
+                    // With own documents every candidate is scored (the price is the same: Voyage bills the
+                    // documents sent, not the results asked for), so their scores can be compared with OWN_FLOOR.
+                    $order = $this->voyage->rerank($modern, $docs,
+                        $ownList !== [] ? count($docs) : min(count($docs), $limit * 2), $this->deadline);
                     $this->trace['rerank_ms'] = self::ms($t);
                     foreach ($order as $o) {
                         if (isset($cands[$o['index']])) {
@@ -384,12 +420,28 @@ final class Search
             }
         }
 
+        $ownWorks = array_flip($own);
+        if ($ownList !== []) {
+            $scores = array_column(array_filter($cands, static fn (array $c): bool => isset($ownWorks[$c['work_id']])
+                && isset($c['score'])), 'score');
+            $this->trace['own_best'] = $scores !== [] ? round(max($scores), 3) : null;
+            $cands = $reranked ? self::ownFirst($cands, $ownWorks) : self::ownInterleaved($cands, $ownWorks);
+        }
         if ($phrase !== []) {
             $cands = self::phraseFirst($cands, $phrase);
         }
         // Breadth: at most PER_WORK passages from one work, unless the search is limited to a few works.
         $perWork = $workIds !== null && count($workIds) <= self::FEW_WORKS ? PHP_INT_MAX : self::PER_WORK;
         $hits = $this->withRetellings(self::withMatch(self::collapse($cands, $limit, $perWork), $phrase), $tokens);
+        if ($ownList !== [] && $ownBody !== null) {
+            $shown = count(array_filter($hits, static fn (array $h): bool => isset($ownWorks[$h['work_id']])
+                && (!$reranked || ($h['score'] ?? -1.0) >= self::OWN_FLOOR)));
+            $near = count(array_filter($hits, static fn (array $h): bool => isset($ownWorks[$h['work_id']])));
+            $this->trace['own_shown'] = $shown;
+            $notes[] = !$reranked ? Churches::ownMixedNote($ownBody)
+                : ($shown > 0 ? Churches::ownFirstNote($ownBody, $shown)
+                    : Churches::ownNoneNote($ownBody, $near > 0));
+        }
         $sides = array_keys(array_filter(['meaning' => $vectorRan, 'keyword' => $keywordRan]));
         $method = ($sides !== [] ? implode(' + ', $sides) : 'no') . ' search' . ($reranked ? ', re-ranked' : '');
         return new SearchResult($query, 'best', $method, $hits, array_values(array_unique($notes)));
@@ -586,15 +638,55 @@ final class Search
             throw new SearchInputException('The phrase has too many different common words for exact mode (at most '
                 . self::MAX_COMMON_WORDS . '). Use a shorter, distinctive part of it.');
         }
-        ['ids' => $workIds, 'notes' => $notes] = $filters->resolve($this->store);
+        ['ids' => $workIds, 'notes' => $notes, 'own' => $own, 'own_body' => $ownBody] = $filters->resolve($this->store);
         $match = Text::ftsPhrase($tokens);
+        $method = 'exact phrase, in book order';
         $t = microtime(true);
         $this->requireTime();
-        $total = $this->store->countMatches($match, $workIds, self::EXACT_COUNT_CAP + 1);
-        if ($total > $offset) {
-            $this->requireTime();
+        $commonOnly = array_filter($tokens, static fn (string $t): bool => !Text::isStopword($t)) === [];
+        if ($own !== [] && $workIds !== null && count($own) < count($workIds) && !$this->promoteOwn) {
+            $notes[] = Churches::ownCappedNote((string) $ownBody);
+            $own = [];
         }
-        $ids = $total > $offset ? $this->store->matchInOrder($match, $workIds, $limit, $offset) : [];
+        if ($own !== [] && $workIds !== null && count($own) < count($workIds) && !$commonOnly) {
+            // A named body's own present-day documents first (DESIGN.md section 11): the first Licensed::PER_WORK
+            // matches of each, current editions first, then official records newest first, at most
+            // Licensed::EXACT_DEPTH in all (exact mode gives no more of these documents, so the rest are not
+            // listed and no page comes back empty); then the other records in book order.
+            $ownAll = $this->store->matchInOrder($match, $own, self::EXACT_COUNT_CAP, 0);
+            $byWork = [];
+            foreach ($ownAll as $id) {
+                $w = intdiv((int) $id, Store::SEQ_MULT);
+                if (count($byWork[$w] ?? []) < Licensed::PER_WORK) {
+                    $byWork[$w][] = (int) $id;
+                }
+            }
+            $works = $this->store->works(array_keys($byWork));
+            $records = $this->store->churchRecords();
+            uksort($byWork, static fn (int $a, int $b): int
+                => [($records[$a]['status'] ?? '') === 'current' ? 0 : 1, -($works[$a]['year'] ?? 0), $a]
+                <=> [($records[$b]['status'] ?? '') === 'current' ? 0 : 1, -($works[$b]['year'] ?? 0), $b]);
+            $head = array_slice(array_merge(...array_values($byWork ?: [[]])), 0, Licensed::EXACT_DEPTH);
+            $others = array_values(array_diff($workIds, $own));
+            $total = min(self::EXACT_COUNT_CAP + 1,
+                count($head) + $this->store->countMatches($match, $others, self::EXACT_COUNT_CAP + 1));
+            $ids = array_slice($head, $offset, $limit);
+            if (count($ids) < $limit && $total > $offset) {
+                $this->requireTime();
+                $ids = array_merge($ids, $this->store->matchInOrder($match, $others, $limit - count($ids),
+                    max(0, $offset - count($head))));
+            }
+            if ($head !== [] && $ownBody !== null) {
+                $method = 'exact phrase, its own present-day documents first, then in book order';
+                $notes[] = Churches::ownExactNote($ownBody, count($head), count($ownAll));
+            }
+        } else {
+            $total = $this->store->countMatches($match, $workIds, self::EXACT_COUNT_CAP + 1);
+            if ($total > $offset) {
+                $this->requireTime();
+            }
+            $ids = $total > $offset ? $this->store->matchInOrder($match, $workIds, $limit, $offset) : [];
+        }
         $this->trace['exact_ms'] = self::ms($t);
         $hits = [];
         foreach ($this->load($ids) as $p) {
@@ -602,7 +694,7 @@ final class Search
             $hits[] = $p;
         }
         $capped = $total > self::EXACT_COUNT_CAP;
-        return new SearchResult($query, 'exact', 'exact phrase, in book order', $hits, $notes, $offset,
+        return new SearchResult($query, 'exact', $method, $hits, $notes, $offset,
             $capped ? self::EXACT_COUNT_CAP : $total, $capped);
     }
 
@@ -909,6 +1001,78 @@ final class Search
             $cands[$i]['author_key'] = Text::looseKey($w['author'] !== '' ? $w['author'] : $w['author_slug']);
         }
         return $cands;
+    }
+
+    /**
+     * The best OWN_TOP passages of the named body's own present-day documents ($own work ids), by keyword and,
+     * when the query vector is there, meaning (an exact scan: these are a few documents), fused.
+     * @param list<string> $tokens  @param list<float>|null $qv  @param list<int> $own  @return list<int>
+     */
+    private function ownList(array $tokens, ?array $qv, array $own): array
+    {
+        $lists = [];
+        try {
+            $lists[] = $this->keywordList($tokens, $own);
+        } catch (\PDOException $e) {
+            $this->log?->error('keyword_search_failed', ['error' => Text::logMessage($e), 'own' => true]);
+        }
+        if ($qv !== null && $this->remaining() >= self::MIN_SECONDS_SCAN) {
+            try {
+                $ignored = [];
+                $lists[] = $this->vectorSearch($qv, $own, self::VECTOR_TOP, $ignored);
+            } catch (\RuntimeException | \LogicException $e) {
+                $this->log?->error('vector_scan_failed', ['error' => Text::logMessage($e), 'own' => true]);
+            }
+        }
+        $out = self::rrf($lists, self::RRF_K, self::OWN_TOP);
+        $this->trace['own_candidates'] = count($out);
+        return $out;
+    }
+
+    /**
+     * Re-ranked candidates with the own documents' passages scoring at least OWN_FLOOR first, each group in
+     * its re-ranked order. @param array<int,mixed> $ownWorks own work ids as keys
+     */
+    public static function ownFirst(array $cands, array $ownWorks): array
+    {
+        $first = [];
+        $rest = [];
+        foreach ($cands as $c) {
+            if (isset($ownWorks[$c['work_id']]) && ($c['score'] ?? -1.0) >= self::OWN_FLOOR) {
+                $first[] = $c;
+            } else {
+                $rest[] = $c;
+            }
+        }
+        return array_merge($first, $rest);
+    }
+
+    /**
+     * Without re-ranking there is no score to judge the own documents' passages by: they take every other
+     * place from the second, in their own order, so they are seen but not put above everything else
+     * (2026-11-19, re-ranking refused: own first lost every history question, 0/6; second keeps them).
+     */
+    public static function ownInterleaved(array $cands, array $ownWorks): array
+    {
+        $own = [];
+        $rest = [];
+        foreach ($cands as $c) {
+            if (isset($ownWorks[$c['work_id']])) {
+                $own[] = $c;
+            } else {
+                $rest[] = $c;
+            }
+        }
+        $out = [];
+        for ($i = 0; $i < max(count($own), count($rest)); $i++) {
+            if (isset($rest[$i])) {
+                $out[] = $rest[$i];
+            }
+            if (isset($own[$i])) {
+                $out[] = $own[$i];
+            }
+        }
+        return $out;
     }
 
     /** Candidates in reranked order, followed by the ones the reranker did not return. */

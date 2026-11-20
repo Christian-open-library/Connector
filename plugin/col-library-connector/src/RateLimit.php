@@ -276,6 +276,22 @@ final class RateLimit
         }
     }
 
+    /**
+     * Passages from documents used by permission this person may still be given today (takeLicensed's count).
+     * Fails closed: 0 when the count cannot be read.
+     */
+    public function licensedLeft(): int
+    {
+        $day = intdiv($this->now(), 86400);
+        $name = $this->link !== null ? 'link_licensed:' . $this->link['id'] : 'licensed_day';
+        try {
+            return $this->write(fn (\PDO $db): int => max(0, $this->licensedPerDay - $this->value($db, $name, $day)));
+        } catch (\Throwable $e) {
+            $this->log?->error('ratelimit_unavailable', ['op' => 'licensedLeft', 'error' => $e->getMessage()]);
+            return 0;
+        }
+    }
+
     /** Passages read_passage and exact-mode search may give one person in full per UTC day. */
     public function readPerDay(): int
     {

@@ -52,7 +52,8 @@ final class Format
             $first = $r->offset + 1;
             $last = $r->offset + count($r->hits);
             $of = $r->totalCapped ? 'more than ' . number_format((int) $r->total) : number_format((int) $r->total);
-            $top = "Results $first-$last of $of for the exact phrase \"$q\" (in book order)";
+            $order = str_starts_with($r->method, 'exact phrase, ') ? substr($r->method, 14) : 'in book order';
+            $top = "Results $first-$last of $of for the exact phrase \"$q\" ($order)";
             if ($r->total !== null && ($r->totalCapped || $last < $r->total)) {
                 $notes[] = "More passages contain this phrase: repeat the search with offset $last for the next ones.";
             }

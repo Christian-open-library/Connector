@@ -65,7 +65,7 @@ final class Tools
             'denomination' => ['type' => 'string', 'maxLength' => Churches::NAME_MAX,
                 'description' => 'Only the records (constitutions, books of order and discipline, digests, '
                     . 'minutes, confessions, catechisms, service books; for a few bodies, such as the URCNA, present-day '
-                    . 'documents used by permission) of one church body and the bodies it descends '
+                    . 'documents used by permission, which are listed first) of one church body and the bodies it descends '
                     . 'from. Give the name or abbreviation the user uses, present-day or historical: e.g. "PCA" searches '
                     . 'the PCUS and the earlier bodies the PCA descends from; also "OPC", "PC(USA)", "Southern Baptist '
                     . 'Convention", "UMC", "Methodist Episcopal Church, South", "LCMS", "ELCA", "Episcopal Church", '
@@ -87,7 +87,7 @@ final class Tools
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
         . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
         . 'confessions, the historic records of more than 80 denominations (constitutions, books of order and discipline, digests, and General Assembly, convention and conference minutes, before 1931), verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
-        . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more). Finds passages by meaning and by keywords, then re-ranks them. Most denominational documents are historical editions (before 1931): give the edition and year, and say that the church body\'s current rules may differ and that it may since have merged or divided. Some present-day church documents are included by permission of their owners (at present the URCNA\'s Church Order, Acts of Synod and study committee reports): their results say "Used by permission" and whether each is the current edition or an official record of a past synod; quote only what answers the question, never a whole document, credit the body, and give the "Official copy" link. When the user names their church or asks what a denomination taught or required, pass it as denomination (e.g. "PCA"): results then come only from that body\'s records and those of the bodies it descends from, each labeled "Church record". Old spellings are handled '
+        . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more). Finds passages by meaning and by keywords, then re-ranks them. Most denominational documents are historical editions (before 1931): give the edition and year, and say that the church body\'s current rules may differ and that it may since have merged or divided. Some present-day church documents are included by permission of their owners (at present the URCNA\'s Church Order, Acts of Synod and study committee reports): their results say "Used by permission" and whether each is the current edition or an official record of a past synod; quote only what answers the question, never a whole document, credit the body, and give the "Official copy" link. When the user names their church or asks what a denomination taught or required, pass it as denomination (e.g. "PCA"): results then come only from that body\'s records and those of the bodies it descends from, each labeled "Church record", with the body\'s own present-day documents first when the library has them. Old spellings are handled '
                 . 'automatically: a search for "sin" also finds "ſinne". Returns verbatim passages, each with a ref '
                 . '(e.g. P1234500017; the digits before the last five are the work_id, here 12345), author, title, '
                 . 'year and page numbers where the source gives them, section, how well it matches (exact words, close, '
@@ -377,6 +377,7 @@ final class Tools
         $search = new Search($store, Voyage::forBuild($ctx, $store), $ctx->deadline, $ctx->config->nprobe(),
             $ctx->log, (is_float($keep) || is_int($keep)) && $keep > 0 && $keep <= 1 ? (float) $keep : 1.0,
             Search::EXACT_SCAN_MAX, $ctx->config->rerankCandidates(), $ctx->config->rerankDocChars());
+        $search->promoteOwn = !$filters->churchOnly() || $ctx->limits->licensedLeft() > 0;
         if ($mode === 'exact') {
             $result = $search->exact($query, $filters, $limit, $offset);
         } else {
@@ -401,7 +402,8 @@ final class Tools
                     return self::error(implode(' ', $kept['notes']));
                 }
                 $result = new SearchResult($result->query, $result->mode, $result->method, $kept['hits'],
-                    array_merge($result->notes, $kept['notes']), $result->offset, $result->total, $result->totalCapped);
+                    array_merge(self::withoutOwnNote($result->notes, $kept['hits']), $kept['notes']), $result->offset, $result->total,
+                    $result->totalCapped);
             }
         }
         if ($result->hits !== []) {
@@ -413,6 +415,21 @@ final class Tools
             }
         }
         return $result->hits === [] ? self::error(Format::noResults($result)) : self::ok(Format::search($result));
+    }
+
+    /**
+     * Notes without the one that says a body's own documents come first when the licensed shelf's limits
+     * (Licensed::limit) left out every one of them: its note says what happened instead.
+     * @param list<string> $notes @param list<array> $hits the hits kept @return list<string>
+     */
+    private static function withoutOwnNote(array $notes, array $hits): array
+    {
+        foreach ($hits as $h) {
+            if (Format::isLicensed($h['work'])) {
+                return $notes;
+            }
+        }
+        return array_values(array_filter($notes, static fn (string $n): bool => !str_starts_with($n, Churches::OWN_NOTE)));
     }
 
     /**
@@ -594,7 +611,7 @@ final class Tools
         $filters = self::filters($args, false);
         $partial = false;
         $store = new Store($ctx->config->dataDir());
-        ['ids' => $allowed, 'notes' => $notes] = $filters->resolve($store);
+        ['ids' => $allowed, 'notes' => $notes, 'own' => $own, 'own_body' => $ownBody] = $filters->resolve($store);
         $notes = array_values(array_filter($notes, static fn (string $n): bool => !str_starts_with($n, 'Filters:')));
         if ($query !== null) {
             $words = Text::keywordTokens(Text::words(Text::normalize($query)), 12);
@@ -630,6 +647,37 @@ final class Tools
             }
             asort($keys);
             $ids = array_map('intval', array_keys($keys));
+        }
+        if ($own !== [] && $allowed !== null) {
+            // A named body's own present-day documents first, current editions before official records, and
+            // without a query the records newest first (DESIGN.md section 11); the rest keep their order.
+            $records = $store->churchRecords();
+            $rank = [];
+            foreach ($own as $id) {
+                $rank[$id] = ($records[$id]['status'] ?? '') === 'current' ? 0 : 1;
+            }
+            $first = [[], []];
+            $rest = [];
+            foreach ($ids as $id) {
+                if (isset($rank[$id])) {
+                    $first[$rank[$id]][] = $id;
+                } else {
+                    $rest[] = $id;
+                }
+            }
+            if ($query === null && count($first[1]) > 1) {
+                $years = [];
+                foreach ($store->works($first[1]) as $id => $w) {
+                    $years[$id] = $w['year'] ?? 0;
+                }
+                usort($first[1], static fn (int $a, int $b): int => [$years[$b] ?? 0, $a] <=> [$years[$a] ?? 0, $b]);
+            }
+            if ($first[0] !== [] || $first[1] !== []) {
+                $ids = array_merge($first[0], $first[1], $rest);
+                if ($ownBody !== null && count($own) < count($allowed)) {
+                    $notes[] = Churches::ownFirstNote($ownBody, 0);
+                }
+            }
         }
         $heading = trim(($query !== null ? 'for "' . Text::echo($query, 120) . '"' : '')
             . ($filters->active() ? ' (' . $filters->describe() . ')' : ''));
@@ -685,7 +733,9 @@ final class Tools
         $store = self::xrefStore($ctx, 'find_scripture_citations');
         $bible = new Bible($store);
         $ref = $bible->reference($input, $bible->citationTranslations(), true);
-        $result = (new Citations($store, $bible))->find($ref, $chapterRefs, $filters, $limit, $offset);
+        $citations = new Citations($store, $bible);
+        $citations->promoteOwn = !$filters->churchOnly() || $ctx->limits->licensedLeft() > 0;
+        $result = $citations->find($ref, $chapterRefs, $filters, $limit, $offset);
         $ctx->log->debug('find_scripture_citations', ['reference' => $input, 'filtered' => $filters->active(),
             'passages' => $result->passages, 'capped' => $result->capped,
             'ms' => (int) round((microtime(true) - $t0) * 1000)]);
@@ -702,7 +752,7 @@ final class Tools
                 }
                 $result = new CitationResult($result->label, $result->heading, $result->texts, $kept['hits'],
                     $result->passages, $result->works, $result->inNotes, $result->chapterOnly, $result->chapterLabel,
-                    $result->offset, $result->capped, array_merge($result->notes, $kept['notes']));
+                    $result->offset, $result->capped, array_merge(self::withoutOwnNote($result->notes, $kept['hits']), $kept['notes']));
             }
         }
         if ($result->hits === []) {

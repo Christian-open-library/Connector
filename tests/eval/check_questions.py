@@ -49,20 +49,47 @@ def church_key(text: str) -> str:
     return re.sub(r'[^0-9a-z]', '', fold(re.sub(r'^\s*the\s+', '', text, flags=re.I)))
 
 
+def church_loose_key(text: str) -> str:
+    """Churches::looseKey: church_key without a trailing church/churches and a plural s."""
+    k = re.sub(r'(church|churches)$', '', church_key(text))
+    return re.sub(r's$', '', k)
+
+
+CHURCH_TRADITIONS = ('presbyterian', 'reformed', 'baptist', 'methodist', 'holiness', 'pentecostal', 'anglican',
+                     'lutheran', 'catholic', 'orthodox', 'congregational', 'anabaptist', 'quaker', 'restorationist',
+                     'moravian', 'other')
+CHURCH_TRADITION_WORDS = ('anglicans', 'romancatholic', 'quakers', 'friends', 'mennonite', 'mennonites', 'easternorthodox',
+                          'presbyterians', 'baptists', 'methodists', 'lutherans', 'catholics', 'pentecostals',
+                          'congregationalist', 'congregationalists', 'reformedchurch', 'restorationmovement')
+
+
 def denomination_allows(repo: Path, denomination: str, tag: str, title: str, year) -> bool | None:
-    """Whether the connector's denomination filter (Churches::match, exact names only) allows a record with this
-    `denomination:` tag, title and year; None when the name is not an exact body or present-day name."""
+    """Whether the connector's denomination filter (Churches::match: exact names, then, unless the name is a
+    tradition, names without "church" and a plural s) allows a record with this `denomination:` tag, title and
+    year; None when the name is not a body or present-day name (a tradition, or words of names)."""
     bodies, names = corpus.load_church_bodies(repo)
     k = church_key(denomination)
+    short = re.sub(r'(church|churches|denomination)$', '', k)
     allowed: dict[str, list] = {}
-    for b in bodies:
-        if any(church_key(n) == k for n in [b.name, *b.tags, *b.aliases]):
-            allowed[b.name] = [(None, None)]
-    for c in names:
-        if any(church_key(n) == k for n in [c.name, *c.aliases]):
-            for body, lo, hi in c.ancestors:
-                if allowed.get(body) != [(None, None)]:
-                    allowed.setdefault(body, []).append((lo, hi))
+    loose = church_loose_key(denomination)
+    tradition = (any(t in (k, short) or k in (t + 's', t + 'ism') for t in CHURCH_TRADITIONS)
+                 or k in CHURCH_TRADITION_WORDS or short in CHURCH_TRADITION_WORDS)
+    tests = [lambda n: church_key(n) in (k, short)]
+    if not tradition and len(loose) >= 3:
+        tests.append(lambda n: church_loose_key(n) == loose)
+    for same in tests:
+        for b in bodies:
+            if any(same(n) for n in [b.name, *b.tags, *b.aliases]):
+                allowed[b.name] = [(None, None)]
+        for c in names:
+            if any(same(n) for n in [c.name, *c.aliases]):
+                if any(b.name == c.name for b in bodies):
+                    allowed[c.name] = [(None, None)]     # a present-day body with records of its own
+                for body, lo, hi in c.ancestors:
+                    if allowed.get(body) != [(None, None)]:
+                        allowed.setdefault(body, []).append((lo, hi))
+        if allowed:
+            break
     if not allowed:
         return None
     owner = next((b.name for b in bodies if tag in b.tags), tag)

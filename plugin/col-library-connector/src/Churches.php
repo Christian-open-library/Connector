@@ -14,10 +14,17 @@
  * ("PC(USA)" = "pcusa"), against
  *   1. the bodies' names, tags and other names: that body;
  *   2. present-day names and their abbreviations: the bodies it descends from;
- *   3. a tradition ("Lutheran", "Episcopalian"): every body of the tradition;
- *   4. else words of a body's names ("Methodist Episcopal"): those bodies;
- * and the union of 1 and 2 is searched. Nothing found is an error that lists what the library has,
+ *   3. a tradition ("Lutheran", "Methodists"): every body of the tradition;
+ *   4. 1 and 2 again with a trailing "church"/"churches" and a plural "s" left out on both sides
+ *      ("United Methodist" = "United Methodist Church", "Reformed Baptist" = "Reformed Baptists",
+ *      "Episcopal" = "The Episcopal Church");
+ *   5. else words of a body's names ("Methodist Episcopal"): those bodies;
+ * and the union of 1 and 2 (or of 4) is searched. Nothing found is an error that lists what the library has,
  * never a silent empty result. Builds made before these tables existed refuse the filters.
+ *
+ * The body a name means itself (not the bodies it descends from) is its "own" body. When an own body has
+ * present-day documents in the library (status current or record, used by permission), every tool lists
+ * them first (DESIGN.md section 11): Filters::resolve gives their ids as 'own'.
  */
 
 declare(strict_types=1);
@@ -35,7 +42,6 @@ final class Churches
 
     /** Other words for a tradition (compact keys). */
     private const TRADITION_WORDS = [
-        'episcopal' => 'Anglican', 'episcopalian' => 'Anglican', 'episcopalians' => 'Anglican',
         'anglicans' => 'Anglican', 'romancatholic' => 'Catholic', 'quakers' => 'Quaker', 'friends' => 'Quaker',
         'mennonite' => 'Anabaptist', 'mennonites' => 'Anabaptist', 'easternorthodox' => 'Orthodox',
         'presbyterians' => 'Presbyterian', 'baptists' => 'Baptist', 'methodists' => 'Methodist',
@@ -76,9 +82,9 @@ final class Churches
     }
 
     /**
-     * The bodies a denomination filter means, with the years of records allowed for each, and notes
-     * that say what was searched.
-     * @return array{bodies: array<string, list<array{0:?int,1:?int}>>, notes: list<string>}
+     * The bodies a denomination filter means, with the years of records allowed for each, notes that say
+     * what was searched, and the body or bodies the name means itself ('own': not the bodies it descends from).
+     * @return array{bodies: array<string, list<array{0:?int,1:?int}>>, notes: list<string>, own: list<string>}
      *         body name => year ranges (one [null, null] range = all its records)
      * @throws SearchInputException when nothing matches (the message lists what the library has)
      */
@@ -93,49 +99,11 @@ final class Churches
                 . 'Convention" or "Methodist Episcopal Church".');
         }
         $echo = Text::echo($text, 80);
-        $found = [];     // body => ranges
-        $notes = [];
 
-        // 1. A body by its name, a tag value or another name.
-        $direct = [];
-        foreach ($bodies as $name => $b) {
-            foreach (array_merge([$name], $b['tags'], $b['aliases']) as $n) {
-                if (in_array(self::key($n), $keys, true)) {
-                    $direct[] = $name;
-                    $found[$name] = [[null, null]];
-                    break;
-                }
-            }
-        }
-        // 2. A present-day name: the bodies it descends from.
-        $named = [];
-        foreach ($store->churchNames() as $name => $c) {
-            foreach (array_merge([$name], $c['aliases']) as $n) {
-                if (in_array(self::key($n), $keys, true)) {
-                    $named[$name] = $c;
-                    foreach ($c['ancestors'] as [$body, $from, $to]) {
-                        if (isset($bodies[$body]) && ($found[$body] ?? null) !== [[null, null]]) {
-                            $found[$body][] = [$from, $to];
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-        foreach ($found as $body => $ranges) {
-            if (in_array([null, null], $ranges, true)) {
-                $found[$body] = [[null, null]];     // all its records
-            }
-        }
-        foreach ($named as $name => $c) {
-            $notes[] = self::lineageNote($echo, $name, $c, $bodies, $direct);
-        }
-        if ($direct !== [] && $named === []) {
-            $notes[] = 'Denomination "' . $echo . '": the records of the ' . self::bodyList($direct, $bodies) . '.';
-        }
-        $notes = array_merge($notes, self::officialSites(array_merge($direct, array_keys($named))));
-        if ($found !== []) {
-            return ['bodies' => $found, 'notes' => $notes];
+        // 1 and 2: exact names.
+        $m = self::byNames($store, $bodies, static fn (string $n): bool => in_array(self::key($n), $keys, true));
+        if ($m['found'] !== []) {
+            return self::named($m, $echo, $bodies);
         }
 
         // 3. A tradition.
@@ -150,39 +118,120 @@ final class Churches
         if ($tradition !== null) {
             $names = array_keys(array_filter($bodies, static fn (array $b): bool => $b['tradition'] === $tradition));
             if ($names !== []) {
-                return ['bodies' => array_fill_keys($names, [[null, null]]),
+                return ['bodies' => array_fill_keys($names, [[null, null]]), 'own' => [],
                         'notes' => ['Denomination "' . $echo . '": the records of all ' . count($names) . ' '
                             . $tradition . ' bodies in the library (the tradition filter does the same).']];
             }
         }
 
-        // 4. Words of a body's names.
+        // 4. Names without a trailing "church" and a plural "s".
+        $loose = self::looseKey($text);
+        if (strlen($loose) >= 3) {
+            $m = self::byNames($store, $bodies, static fn (string $n): bool => self::looseKey($n) === $loose);
+            if ($m['found'] !== []) {
+                return self::named($m, $echo, $bodies);
+            }
+        }
+
+        // 5. Words of a body's names.
         $words = ' ' . Text::looseKey($text) . ' ';
         if (strlen(trim($words)) >= 4) {
-            $loose = [];
+            $found = [];
             foreach ($bodies as $name => $b) {
                 foreach (array_merge([$name], $b['tags'], $b['aliases']) as $n) {
                     if (str_contains(' ' . Text::looseKey($n) . ' ', $words)) {
-                        $loose[] = $name;
+                        $found[] = $name;
                         break;
                     }
                 }
             }
-            if ($loose !== []) {
-                return ['bodies' => array_fill_keys($loose, [[null, null]]),
+            if ($found !== []) {
+                return ['bodies' => array_fill_keys($found, [[null, null]]), 'own' => count($found) === 1 ? $found : [],
                         'notes' => array_merge(['No church body is named exactly "' . $echo . '"; searching the records of the '
-                            . count($loose) . ' whose names contain it: ' . self::bodyList($loose, $bodies) . '.'],
-                            count($loose) === 1 ? self::officialSites($loose) : [])];
+                            . count($found) . ' whose names contain it: ' . self::bodyList($found, $bodies) . '.'],
+                            count($found) === 1 ? self::officialSites($found) : [])];
             }
         }
         throw new SearchInputException(self::unknown($store, $echo));
     }
 
+    /** "The United Methodist Church" -> "unitedmethodist": key() without a leading "the", a trailing church(es) and plural s. */
+    public static function looseKey(string $text): string
+    {
+        $k = self::key(preg_replace('/^\s*the\s+/i', '', $text) ?? $text);
+        $k = preg_replace('/(church|churches)$/', '', $k) ?? $k;
+        return preg_replace('/s$/', '', $k) ?? $k;
+    }
+
+    /**
+     * Bodies (by name, tag or other name) and present-day names (by name or other name) that $is accepts.
+     * @return array{found: array<string, list<array{0:?int,1:?int}>>, direct: list<string>, named: array<string, array>}
+     */
+    private static function byNames(Store $store, array $bodies, \Closure $is): array
+    {
+        $found = [];     // body => ranges
+        $direct = [];
+        foreach ($bodies as $name => $b) {
+            foreach (array_merge([$name], $b['tags'], $b['aliases']) as $n) {
+                if ($is($n)) {
+                    $direct[] = $name;
+                    $found[$name] = [[null, null]];
+                    break;
+                }
+            }
+        }
+        $named = [];
+        foreach ($store->churchNames() as $name => $c) {
+            foreach (array_merge([$name], $c['aliases']) as $n) {
+                if ($is($n)) {
+                    $named[$name] = $c;
+                    if (isset($bodies[$name])) {
+                        $found[$name] = [[null, null]];     // a present-day body whose own records the library holds
+                    }
+                    foreach ($c['ancestors'] as [$body, $from, $to]) {
+                        if (isset($bodies[$body]) && ($found[$body] ?? null) !== [[null, null]]) {
+                            $found[$body][] = [$from, $to];
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        foreach ($found as $body => $ranges) {
+            if (in_array([null, null], $ranges, true)) {
+                $found[$body] = [[null, null]];     // all its records
+            }
+        }
+        return ['found' => $found, 'direct' => $direct, 'named' => $named];
+    }
+
+    /** match()'s answer for names found by byNames(): bodies, notes, and the own bodies (named directly, or a present-day name that is a body). */
+    private static function named(array $m, string $echo, array $bodies): array
+    {
+        ['found' => $found, 'direct' => $direct, 'named' => $named] = $m;
+        $notes = [];
+        foreach ($named as $name => $c) {
+            $notes[] = self::lineageNote($echo, (string) $name, $c, $bodies, $direct);
+        }
+        if ($direct !== [] && $named === []) {
+            $notes[] = 'Denomination "' . $echo . '": the records of the ' . self::bodyList($direct, $bodies) . '.';
+        }
+        $notes = array_merge($notes, self::officialSites(array_merge($direct, array_map('strval', array_keys($named)))));
+        $own = $direct;
+        foreach (array_keys($named) as $name) {
+            if (isset($bodies[$name]) && !in_array($name, $own, true)) {
+                $own[] = (string) $name;
+            }
+        }
+        return ['bodies' => $found, 'notes' => $notes, 'own' => $own];
+    }
+
     /**
      * Ids of the works a denomination and/or tradition filter allows, out of $works (all works by id), and
      * notes. Works outside the year ranges of their body, or without a year when a range applies, are left
-     * out (counted in the notes).
-     * @return array{ids: array<int,true>, notes: list<string>}
+     * out (counted in the notes). 'own': the allowed works that are present-day documents (current editions and
+     * official records, used by permission) of the body the name means itself, which the tools list first.
+     * @return array{ids: array<int,true>, notes: list<string>, own: list<int>, own_body: ?string}
      * @throws SearchInputException
      */
     public static function allowed(Store $store, array $works, ?string $denomination, ?string $tradition): array
@@ -232,6 +281,15 @@ final class Churches
             $ids[$id] = true;
         }
         $notes = $match['notes'] ?? [];
+        $ownBodies = array_flip($match['own'] ?? []);
+        $own = [];
+        foreach (array_keys($ids) as $id) {
+            if (isset($ownBodies[$bodyOf[$records[$id]['denomination']] ?? ''])
+                && in_array($records[$id]['status'], ['current', 'record'], true)) {
+                $own[] = $id;
+            }
+        }
+        $ownBody = $own !== [] ? ($bodyOf[$records[$own[0]]['denomination']] ?? null) : null;
         $present = 0;     // records used by permission (current editions and official records), the rest historical
         foreach (array_keys($ids) as $id) {
             if (in_array($records[$id]['status'], ['current', 'record'], true)) {
@@ -246,7 +304,55 @@ final class Churches
         if ($ids !== []) {
             $notes[] = $present === 0 ? self::HISTORICAL_RULE : ($present === count($ids) ? self::PRESENT_RULE : self::MIXED_RULE);
         }
-        return ['ids' => $ids, 'notes' => $notes];
+        return ['ids' => $ids, 'notes' => $notes, 'own' => $own, 'own_body' => $ownBody];
+    }
+
+    /** Start of every note about a body's own present-day documents (Tools drops them when the daily cap left those out). */
+    public const OWN_NOTE = 'Own documents: ';
+
+    /** The note when a body's own present-day documents are listed first (search_library, citations, find_works). */
+    public static function ownFirstNote(string $body, int $shown): string
+    {
+        return self::OWN_NOTE . 'the present-day documents of the ' . self::plainName($body) . ' itself (used by '
+            . 'permission) are listed first' . ($shown > 0 ? " ($shown of the results)" : '') . '; the historical records '
+            . 'of the bodies it descends from follow.';
+    }
+
+    /** The note when none of a body's own present-day documents match the question well enough to come first. */
+    public static function ownNoneNote(string $body, bool $nearShown): string
+    {
+        $b = self::plainName($body);
+        return self::OWN_NOTE . "no present-day document of the $b itself matches this question well"
+            . ($nearShown ? '; its weaker matches are marked so, and the other results are' : ', so the results are')
+            . " historical records of the bodies it descends from. Do not present those as the present position of the $b.";
+    }
+
+    /** Exact mode: how many of the body's own matches are listed first, out of how many it has. */
+    public static function ownExactNote(string $body, int $listed, int $all): string
+    {
+        $b = self::plainName($body);
+        return self::OWN_NOTE . "the first matches in the present-day documents of the $b itself (used by permission) "
+            . "are listed first: $listed passage" . ($listed === 1 ? '' : 's') . ', at most ' . Licensed::PER_WORK
+            . ' from each document' . ($all > $listed ? ', of the ' . ($all > 1000 ? 'more than 1,000' : number_format($all))
+                . ' that hold the phrase (the rest are in each document\'s "Official copy")' : '')
+            . '. The historical records of the bodies it descends from follow, in book order.';
+    }
+
+    /** The note when a person's documents used by permission are used up for today, so a body's own are not put first. */
+    public static function ownCappedNote(string $body): string
+    {
+        return 'Documents used by permission: this account has reached today\'s limit of passages from them, so the '
+            . 'present-day documents of the ' . self::plainName($body) . ' itself are not listed first until 00:00 UTC; '
+            . 'the results are historical records of the bodies it descends from. Do not present those as its present '
+            . 'position.';
+    }
+
+    /** The note when a body's own present-day documents are mixed in without re-ranking (no scores to judge them by). */
+    public static function ownMixedNote(string $body): string
+    {
+        return self::OWN_NOTE . 'the present-day documents of the ' . self::plainName($body) . ' itself (used by '
+            . 'permission) take every other place from the second. Re-ranking was unavailable, so how closely each result '
+            . 'matches is not known.';
     }
 
     /** True for the rule lines that allowed() adds to the notes. */
