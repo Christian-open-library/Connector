@@ -147,3 +147,22 @@ function test_foreign_gap_mark_reads_as_plain_words(): void
     assert_same('[illegible] and [gap: 1 page]', Text::inert('[illegible] and [gap: 1 page]'), 'other marks unchanged');
     assert_same('no marks here', Text::inert('no marks here'));
 }
+
+function test_possessives_match_with_and_without_the_apostrophe(): void
+{
+    assert_same('god', Text::unpossessive("god's"));
+    assert_same('moses', Text::unpossessive("moses's"));
+    assert_same('gods', Text::unpossessive('gods'));
+    assert_same("o'er", Text::unpossessive("o'er"));
+    assert_same('body : "the lord supper"', Text::ftsPhraseAny(['the', 'lord', 'supper']), 'no possessive: one phrase');
+    assert_same('body : ("the lord\'s supper" OR "the lords supper")', Text::ftsPhraseAny(['the', "lord's", 'supper']));
+    assert_same('body : ("moses\'s law" OR "moses law")', Text::ftsPhraseAny(["moses's", 'law']), 'a name ending in s');
+    $three = Text::ftsPhraseAny(["a's", "b's", "c's"]);
+    assert_same(4, substr_count($three, ' OR ') + 1, 'at most ' . Text::POSSESSIVE_FORMS . ' possessives get two forms');
+}
+
+function test_contractions_leave_no_common_word_in_a_keyword_search(): void
+{
+    $kw = Text::keywordTokens(array_map([Text::class, 'unpossessive'], ["what's", 'the', 'chief', "it's", "god's"]));
+    assert_same(['chief', 'god'], $kw, '"what\'s" and "it\'s" become stopwords and are dropped');
+}

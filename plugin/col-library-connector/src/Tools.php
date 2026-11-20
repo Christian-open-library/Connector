@@ -74,11 +74,12 @@ final class Tools
             'tradition' => ['type' => 'string', 'enum' => Churches::TRADITIONS,
                 'description' => 'Only the church records of one tradition (all its bodies in the library).'],
             'year_from' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 2100,
-                'description' => 'Only works published in or after this year. When a year filter is set, works '
-                    . 'without a known year are left out (many modern reprints have none).'],
+                'description' => 'Only works from this year on: published then, or later editions and translations '
+                    . 'of writers who lived then (Athanasius in an 1892 translation counts as his own years). Works with '
+                    . 'no known year and no known writer\'s dates are left out.'],
             'year_to' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 2100,
-                'description' => 'Only works published in or before this year. When a year filter is set, works '
-                    . 'without a known year are left out.'],
+                'description' => 'Only works up to this year: published then, or later editions and translations of '
+                    . 'writers who lived then. Works with no known year and no known writer\'s dates are left out.'],
         ];
         $search = [
             'name' => 'search_library',
@@ -382,6 +383,12 @@ final class Tools
             $result = $search->exact($query, $filters, $limit, $offset);
         } else {
             $result = $search->best($query, $filters, $limit);
+            $hint = $filters->author === null && $filters->workId === null && $filters->collection === null
+                && !$filters->churchOnly() ? Search::groupHint($search->queryTokens($query)) : null;
+            if ($hint !== null) {
+                $result = new SearchResult($result->query, $result->mode, $result->method, $result->hits,
+                    array_merge($result->notes, [$hint]));
+            }
             if ($offset > 0) {
                 $result = new SearchResult($result->query, $result->mode, $result->method, $result->hits,
                     array_merge($result->notes, ['offset applies only to mode "exact" and was ignored.']));
@@ -610,6 +617,8 @@ final class Tools
         $limit = self::integer($args, 'limit', 1, 50, 20);
         $filters = self::filters($args, false);
         $partial = false;
+        $missing = [];
+        $corrected = null;
         $store = new Store($ctx->config->dataDir());
         ['ids' => $allowed, 'notes' => $notes, 'own' => $own, 'own_body' => $ownBody] = $filters->resolve($store);
         $notes = array_values(array_filter($notes, static fn (string $n): bool => !str_starts_with($n, 'Filters:')));
@@ -618,22 +627,49 @@ final class Tools
             if ($words === []) {
                 throw new ArgumentException('The query has no words to look for; give words from a title or an author\'s name.');
             }
-            // Titles keep their original spelling, so each word may match its old spellings too.
-            $modern = $store->spellings($words);
-            $variants = $store->variantsOf(array_values(array_unique(array_merge($words, array_values($modern)))));
-            $groups = [];
-            foreach ($words as $w) {
-                $alts = array_merge([$w], array_filter(explode(' ', $modern[$w] ?? ''), 'strlen'));
-                $old = [];
-                foreach ($alts as $a) {
-                    $old = array_merge($old, $variants[$a] ?? []);
-                }
-                $groups[] = array_values(array_unique(array_merge($alts, $old)));
-            }
+            // "St." / "Saint" before a name: the library files "Augustine", not "St. Augustine".
+            $named = array_values(array_filter($words, static fn (string $w): bool => !in_array($w, ['st', 'ste', 'saint'], true)));
+            $words = $named !== [] ? $named : $words;
+            $groups = self::titleGroups($store, $words);
             $ranked = $store->workSearch(Text::ftsAllOfAny($groups), 5000);
-            if ($ranked === [] && count($groups) > 1) {
-                $ranked = $store->workSearch(Text::ftsAllOfAny($groups, ' OR '), 5000);
-                $partial = $ranked !== [];
+            if ($ranked === []) {
+                // A word no title or author name holds: a slip of spelling ("Spurgen", "Jonathon") is searched as the
+                // nearest word that is there; otherwise the other words are searched without it, and the answer says so.
+                $absent = [];
+                foreach ($groups as $i => $g) {
+                    if ($store->workSearch(Text::ftsAllOfAny([$g]), 1) === []) {
+                        $absent[$i] = $words[$i];
+                    }
+                }
+                $fixed = [];
+                foreach ($absent as $i => $w) {
+                    $near = self::nearestTitleWord($store, $w);
+                    if ($near !== null) {
+                        $fixed[$i] = $near;
+                    }
+                }
+                if ($fixed !== []) {
+                    $fixedWords = array_replace($words, $fixed);
+                    $try = $store->workSearch(Text::ftsAllOfAny(self::titleGroups($store, $fixedWords)), 5000);
+                    if ($try !== []) {
+                        $ranked = $try;
+                        $corrected = 'NOT FOUND AS ASKED: ' . implode(', ', array_map(
+                            static fn (string $w): string => '"' . Text::echo($w, 40) . '"', array_intersect_key($words, $fixed)))
+                            . ' is in no title or author\'s name in the library, so it was searched as "'
+                            . implode(' ', $fixedWords) . '", the nearest spelling that is. If that is not who or what '
+                            . 'was meant (a different writer, not a slip of spelling), tell the user the library does not '
+                            . 'have it. ' . Format::FROM_MEMORY_RULE;
+                    }
+                }
+                if ($ranked === [] && $absent !== [] && count($absent) < count($groups)) {
+                    $ranked = $store->workSearch(Text::ftsAllOfAny(array_values(array_diff_key($groups, $absent))), 5000);
+                    $missing = array_values($absent);
+                    $partial = $ranked !== [];
+                }
+                if ($ranked === [] && count($groups) > 1) {
+                    $ranked = $store->workSearch(Text::ftsAllOfAny($groups, ' OR '), 5000);
+                    $partial = $ranked !== [];
+                }
             }
             $ids = array_map('intval', array_keys($ranked));
             if ($allowed !== null) {
@@ -691,13 +727,93 @@ final class Tools
         foreach (array_slice($ids, 0, $limit) as $id) {
             $rows[] = $works[$id];
         }
-        $lead = $partial
-            ? 'NOT FOUND AS ASKED: no work in the library matches all the words of "' . Text::echo((string) $query, 120)
+        $lead = $corrected ?? (!$partial ? '' : ($missing !== []
+            ? 'NOT FOUND AS ASKED: no title or author\'s name in the library has ' . implode(' or ', array_map(
+                static fn (string $w): string => '"' . Text::echo($w, 40) . '"', $missing)) . '. The works below match the '
+                . 'other words of "' . Text::echo((string) $query, 120) . '". Check whether the one wanted is among them '
+                . '(titles vary between editions, and names are filed without places such as "of Hippo"). If it is not, '
+                . 'tell the user the library does not have it. ' . Format::FROM_MEMORY_RULE
+            : 'NOT FOUND AS ASKED: no work in the library matches all the words of "' . Text::echo((string) $query, 120)
                 . '". The works below match only some of the words. Check whether the one wanted is among them (titles '
                 . 'vary between editions). If it is not, tell the user the library does not have it. '
-                . Format::FROM_MEMORY_RULE
-            : '';
+                . Format::FROM_MEMORY_RULE));
         return self::ok(Format::works($rows, count($ids), $heading, $notes, $lead));
+    }
+
+    /** Number words that stand for one another in titles ("1 Peter", "First Epistle", "I. Peter"). */
+    private const TITLE_NUMBERS = [['1', 'first', 'i'], ['2', 'second', 'ii'], ['3', 'third', 'iii'], ['4', 'fourth', 'iv']];
+
+    /**
+     * For each query word, the forms a title may hold it in: old spellings (titles keep their original
+     * spelling), the possessive without its apostrophe ("pilgrim's" -> "pilgrims", as CCEL writes it), and
+     * number words ("1" / "first" / "i").
+     * @param list<string> $words  @return list<list<string>>
+     */
+    private static function titleGroups(Store $store, array $words): array
+    {
+        $modern = $store->spellings($words);
+        $variants = $store->variantsOf(array_values(array_unique(array_merge($words, array_values($modern)))));
+        $groups = [];
+        foreach ($words as $w) {
+            $alts = array_merge([$w], array_filter(explode(' ', $modern[$w] ?? ''), 'strlen'));
+            $old = [];
+            foreach ($alts as $a) {
+                $old = array_merge($old, $variants[$a] ?? []);
+            }
+            $base = Text::unpossessive($w);
+            if ($base !== $w) {
+                $old[] = str_ends_with($base, 's') ? $base : $base . 's';
+            }
+            foreach (self::TITLE_NUMBERS as $same) {
+                if (in_array($w, $same, true) && $w !== 'i') {
+                    $old = array_merge($old, $same);
+                }
+            }
+            $groups[] = array_values(array_unique(array_merge($alts, $old)));
+        }
+        return $groups;
+    }
+
+    /**
+     * The word in the library's titles and author names nearest to $word, for a slip of spelling: same first
+     * letter, at most one letter different (two for words of 7 letters or more), the commonest such word.
+     * Null when the word is short (under 5 letters) or nothing is near.
+     */
+    private static function nearestTitleWord(Store $store, string $word): ?string
+    {
+        $word = Text::looseKey($word);
+        $len = strlen($word);
+        if ($len < 5 || $len > 30 || str_contains($word, ' ')) {
+            return null;
+        }
+        static $vocab = null;
+        static $vocabFor = null;
+        if ($vocab === null || $vocabFor !== spl_object_id($store)) {
+            $vocab = [];
+            foreach ($store->allWorks() as $w) {
+                foreach (explode(' ', Text::looseKey(mb_substr($w['author'] . ' ' . $w['title'], 0, 400))) as $t) {
+                    if (strlen($t) >= 4) {
+                        $vocab[$t] = ($vocab[$t] ?? 0) + 1;
+                    }
+                }
+            }
+            $vocabFor = spl_object_id($store);
+        }
+        $max = $len >= 7 ? 2 : 1;
+        $best = null;
+        $bestKey = null;
+        foreach ($vocab as $t => $n) {
+            $t = (string) $t;
+            if ($t[0] !== $word[0] || abs(strlen($t) - $len) > $max) {
+                continue;
+            }
+            $d = levenshtein($word, $t);
+            if ($d >= 1 && $d <= $max && ($bestKey === null || [$d, -$n] < $bestKey)) {
+                $best = $t;
+                $bestKey = [$d, -$n];
+            }
+        }
+        return $best;
     }
 
     // ------------------------------------------------------------------------- read_scripture

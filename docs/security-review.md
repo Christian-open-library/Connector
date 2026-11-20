@@ -1,6 +1,6 @@
 # Security reviews
 
-*Newest first: 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
+*Newest first: 20 November 2026 (search fixes after a round of testing); 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
 website; everything changed since 10 November)
 and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
@@ -15,6 +15,30 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 20 November 2026: search fixes after a round of testing
+
+Nine AI testers (Claude) ran about 500 searches on a private copy of the library to find where search did badly.
+These were fixed:
+
+- Author names written with "St." or a place ("St. Augustine", "Augustine of Hippo") now find the writer.
+- One writer filed under two spellings ("John Calvin", "Jean Calvin") is found under either.
+- "God's" also finds the old spelling "Gods".
+- A short text named in a question (a creed, a catechism) is now looked at.
+- Year filters also count later editions of writers who lived in those years.
+
+Question checked: does any of this let someone make the server do much more work, or get more than before? No. The reranker still reads the same 50 passages, so a search
+costs the same. The extra work is small and has fixed limits. For a text named in a question it is at most 12 title
+lookups, one keyword search and one meaning scan of at most 20,000 passages. For a phrase with possessives it is
+at most 4 forms of the phrase. In testing the median search took 13.6 seconds, against 13.1 before. The test
+runtime is several times slower than the server.
+
+A review (Claude) read the change before release. **It found 2 issues and both were fixed before release.**
+
+| Issue | Status |
+|---|---|
+| An author name with "St." that fits several writers ("St. John") matched every one of them. | **Fixed:** only a name that fits one writer is accepted; otherwise the answer lists the writers and asks which (`tests/php/tools_test.php`). |
+| A misspelt title word was searched as the nearest word in the library, so a writer the library lacks ("Packer") could come back as another ("Parker"). | **Fixed:** the answer now opens with NOT FOUND AS ASKED and says what was searched instead (`tests/php/tools_test.php`). |
 
 ## 19 November 2026, later: a church's own documents first
 

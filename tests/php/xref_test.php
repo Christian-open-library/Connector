@@ -392,8 +392,10 @@ function test_citations_filters(): void
     assert_same([10300001, 10300004], ids(ok('find_scripture_citations', ['reference' => 'Rom 8:28',
         'collection' => 'ccel-schaff'])));
     assert_same([10400002, 10400004, 10400005], ids(ok('find_scripture_citations', ['reference' => 'Rom 8:28', 'work_id' => 104])));
-    assert_contains('No works in the library match these filters: up to 1500.',
-        err('find_scripture_citations', ['reference' => 'Rom 8:28', 'year_to' => 1500]));
+    assert_contains('No works in the library match these filters: up to 300.',
+        err('find_scripture_citations', ['reference' => 'Rom 8:28', 'year_to' => 300]));
+    assert_contains('Years: 1 later edition or translation of writers who lived in those years is included',
+        ok('find_scripture_citations', ['reference' => 'Rom 8:28', 'year_to' => 1500]), 'Augustine (354–430) in an 1886 translation');
     assert_contains('No work has work_id 999', err('find_scripture_citations', ['reference' => 'Rom 8:28', 'work_id' => 999]));
     assert_same([10300005], ids(ok('find_scripture_citations', ['reference' => 'Rom 8:13', 'author' => 'augustine'])),
         'Rom 8:1-27 contains verse 13');

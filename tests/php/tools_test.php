@@ -9,8 +9,10 @@ declare(strict_types=1);
 
 namespace ColLibraryTest\Tools;
 
+use ColLibrary\Filters;
 use ColLibrary\Format;
 use ColLibrary\SearchResult;
+use ColLibrary\Store;
 use ColLibrary\Tools;
 use ColLibrary\UnknownToolException;
 use ColLibraryTest\Fixture;
@@ -258,8 +260,8 @@ function test_find_works(): void
     assert_contains('Works 1-2 of 2 for "mortification of sin in believers"', $text);
     assert_contains("[1] work_id", $text);
     $owen = ok('find_works', ['query' => 'Mortification Sinne', 'year_from' => 1600]);
-    assert_contains('Works 1-1 of 1 for "Mortification Sinne" (from 1600)', $owen);
-    assert_contains("[1] work_id 101 · John Owen, *Of the Mortification of Sinne in Beleevers* (1668)\n"
+    assert_contains('Works 1-2 of 2 for "Mortification Sinne" (from 1600)', $owen, 'the undated edition counts by Owen\'s years');
+    assert_contains("] work_id 101 · John Owen, *Of the Mortification of Sinne in Beleevers* (1668)\n"
         . "Full title: Of the mortification of sinne in beleevers: the necessity, nature, and means of it\n"
         . "book · EEBO-TCP (original 1500s-1700s editions) · 9 passages · pp. iii–5 · License: cc0\n"
         . "Author: John Owen (1616–1683, English Puritan, Congregationalist)\n"
@@ -278,12 +280,69 @@ function test_find_works(): void
     assert_contains('NOT FOUND: no works found for "xylophone"', $none);
     assert_contains('tell the user the library does not have it. ' . Format::FROM_MEMORY_RULE, $none);
     $some = ok('find_works', ['query' => 'mortification xylophone']);
-    assert_true(str_starts_with($some, 'NOT FOUND AS ASKED: no work in the library matches all the words of '
-        . '"mortification xylophone". The works below match only some of the words.'), 'said first: ' . substr($some, 0, 120));
+    assert_true(str_starts_with($some, 'NOT FOUND AS ASKED: no title or author\'s name in the library has "xylophone". '
+        . 'The works below match the other words of "mortification xylophone".'), 'said first: ' . substr($some, 0, 160));
+    preg_match_all('/^\[\d+\] work_id (\d+) /m', $some, $m);
+    $sorted = $m[1];
+    sort($sorted);
+    assert_same(['101', '102'], $sorted, 'the word that is nowhere is left out, the rest must all match');
     assert_contains(Format::FROM_MEMORY_RULE . "\n\nWorks 1-", $some);
     assert_false(str_contains(ok('find_works', ['query' => 'augustine confessions']), 'NOT FOUND'), 'a full match says nothing');
     assert_contains('No works in the library match these filters: collection docsouth.',
         err('find_works', ['collection' => 'docsouth']));
+}
+
+function test_find_works_forgives_names_and_slips(): void
+{
+    // "St." is not part of the library's names; "Augustin" is a slip for "Augustine"; "Owen's" is "Owens"/"Owen".
+    $saint = ok('find_works', ['query' => 'St. Augustine confessions']);
+    assert_contains('work_id 103 · Augustine, *The Confessions* (1886)', $saint);
+    assert_false(str_contains($saint, 'NOT FOUND'), 'a saint\'s title is no reason to say not found');
+    $slip = ok('find_works', ['query' => 'agustine confessions']);
+    assert_contains('work_id 103 · Augustine', $slip);
+    assert_true(str_starts_with($slip, 'NOT FOUND AS ASKED: "agustine" is in no title or author\'s name in the library, '
+        . 'so it was searched as "augustine confessions"'), 'a correction leads, so a different writer ("Packer" -> Parker) is not passed off');
+    assert_contains('tell the user the library does not have it', $slip);
+    assert_contains('work_id 101', ok('find_works', ['query' => "Owen's mortification"]));
+    assert_contains('NOT FOUND: no works found for "xyz"', err('find_works', ['query' => 'xyz']), 'short words are not corrected');
+}
+
+function test_author_filter_forgives_titles_and_places(): void
+{
+    $saint = ok('find_works', ['author' => 'St. Augustine']);
+    assert_contains('Augustine, *The Confessions*', $saint);
+    assert_contains('Author "St. Augustine" matched as "augustine"', $saint);
+    $hippo = ok('find_works', ['author' => 'Augustine of Hippo']);
+    assert_contains('matched as "augustine"', $hippo);
+    assert_false(str_contains(ok('find_works', ['author' => 'Augustine']), 'matched as'), 'a name that matches says nothing');
+    assert_contains('Authors with similar names', err('search_library', ['query' => 'sin', 'author' => 'St. Augustinus Magnus']));
+    assert_same(['augustine of hippo', 'st augustine', 'augustine'], Filters::plainNames('st augustine of hippo'));
+    assert_same(['basil'], Filters::plainNames('basil the great'));
+    assert_same(['john chrysostom'], Filters::plainNames('saint john chrysostom'));
+    assert_same([], Filters::plainNames('owen'));
+    assert_contains('Author "St. Owen" matched as "owen"', ok('find_works', ['author' => 'St. Owen']), 'one writer: accepted');
+    $w = static fn (string $a): array => ['author' => $a, 'author_slug' => ''];
+    $works = [1 => $w('Gregory of Nyssa'), 2 => $w('Gregory Nazianzen'), 3 => $w('Basil'), 4 => $w('Basil Manly Jr'),
+        5 => $w('Charles Spurgeon'), 6 => $w('Charles H. Spurgeon'), 7 => $w('Augustine')];
+    $store = Fixture\store_or_skip();
+    $greg = Filters::authorKeys($store, $works, 'Gregory of Nazianzus');
+    assert_same(['Gregory of Nyssa', 'Gregory Nazianzen'], $greg['ambiguous'], 'several writers: listed, none chosen');
+    $basil = Filters::authorKeys($store, $works, 'St. Basil');
+    assert_same(['=basil'], $basil['keys'], 'the name itself, not Basil Manly');
+    assert_contains('Other writers with this name: Basil Manly Jr', implode(' ', $basil['notes']));
+    $sp = Filters::authorKeys($store, $works, 'Rev. Spurgeon');
+    assert_same([' spurgeon '], $sp['keys'], 'two names of one writer (same first and last word)');
+    assert_same([], $sp['ambiguous']);
+    assert_true(Filters::authorMatches(['author' => 'Basil', 'author_slug' => 'basil'], ['=basil']));
+    assert_false(Filters::authorMatches(['author' => 'Basil Manly Jr', 'author_slug' => ''], ['=basil']), '= is the whole name');
+    assert_true(Filters::authorMatches(['author' => 'Augustine', 'author_slug' => 'augustine'], [' augustine ']));
+    assert_false(Filters::authorMatches(['author' => 'Augustine Birrell', 'author_slug' => ''], [' birr ']),
+        'padded keys match whole words only');
+    $same = Store::sameWriterGroups([['name' => 'John Calvin', 'dates' => '1509–1564'],
+        ['name' => 'Jean Calvin', 'dates' => '1509–1564'], ['name' => 'Calvin Coolidge', 'dates' => '1872–1933'],
+        ['name' => 'A. Calvin', 'dates' => ''], ['name' => 'B. Calvin', 'dates' => '']]);
+    assert_same(['John Calvin' => ['Jean Calvin'], 'Jean Calvin' => ['John Calvin']], $same,
+        'same surname and same dates join; no dates never join');
 }
 
 function test_output_is_capped(): void
@@ -431,4 +490,11 @@ function test_search_results_carry_their_context(): void
     assert_contains('Before (P10400002 · pp. 9–10): …', $text);
     assert_same(2, count(Fixture\result_ids($text)), 'context lines are not counted as results');
     assert_not_contains(Format::CONTEXT_RULE, Format::noResults(new SearchResult('q', 'best', 'keyword search', [], [])));
+}
+
+function test_search_library_adds_the_group_hint(): void
+{
+    assert_contains('For what the Puritans themselves wrote', ok('search_library', ['query' => 'puritan sabbath']));
+    assert_not_contains('For what the Puritans themselves wrote',
+        ok('search_library', ['query' => 'puritan sabbath', 'author' => 'owen']), 'not when an author is set');
 }

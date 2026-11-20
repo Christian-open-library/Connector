@@ -99,9 +99,19 @@ final class Filters
                 . 'library\'s own results (a ref such as P1234500017 belongs to work 12345).');
         }
         $authorKey = $this->author !== null ? Text::looseKey($this->author) : null;
+        $authorKeys = null;
+        $authorNotes = [];
+        $ambiguousAuthors = [];
+        if ($this->author !== null) {
+            ['keys' => $authorKeys, 'notes' => $authorNotes, 'ambiguous' => $ambiguousAuthors] = self::authorKeys($store, $works, $this->author);
+        }
         $church = $this->churchOnly() ? Churches::allowed($store, $works, $this->denomination, $this->tradition) : null;
         $ids = [];
         $noYear = 0;
+        $byLife = 0;
+        $lives = $this->hasYears() ? $store->authorLives() : [];
+        // A church record is dated by itself (a digest of 1888 is not of its compiler's earlier years).
+        $records = $this->hasYears() && $store->hasChurchRecords() ? $store->churchRecords() : [];
         foreach ($works as $id => $w) {
             if ($this->workId !== null && $id !== $this->workId) {
                 continue;
@@ -112,32 +122,47 @@ final class Filters
             if ($this->collection !== null && $w['collection'] !== $this->collection) {
                 continue;
             }
-            if ($authorKey !== null && !str_contains(Text::looseKey($w['author']), $authorKey)
-                && !str_contains(Text::looseKey($w['author_slug']), $authorKey)) {
+            if ($authorKeys !== null && !self::authorMatches($w, $authorKeys)) {
                 continue;
             }
             if ($this->hasYears()) {
-                if ($w['year'] === null) {
-                    $noYear++;
-                    continue;
-                }
-                if (($this->yearFrom !== null && $w['year'] < $this->yearFrom)
-                    || ($this->yearTo !== null && $w['year'] > $this->yearTo)) {
-                    continue;
+                $y = $w['year'];
+                $inside = $y !== null && ($this->yearFrom === null || $y >= $this->yearFrom)
+                    && ($this->yearTo === null || $y <= $this->yearTo);
+                if (!$inside) {
+                    if (!isset($records[$id]) && self::livedThen($lives[$w['author']] ?? null, $y, $this->yearFrom, $this->yearTo)) {
+                        $byLife++;
+                    } else {
+                        if ($y === null) {
+                            $noYear++;
+                        }
+                        continue;
+                    }
                 }
             }
             $ids[] = $id;
         }
-        $notes = ['Filters: ' . $this->describe() . ' (' . count($ids) . ' work' . (count($ids) === 1 ? '' : 's') . ').'];
+        $notes = array_merge(['Filters: ' . $this->describe() . ' (' . count($ids) . ' work' . (count($ids) === 1 ? '' : 's') . ').'],
+            $ids !== [] ? $authorNotes : []);
         if ($church !== null) {
             $notes = array_merge($notes, $church['notes']);
+        }
+        if ($byLife > 0) {
+            $notes[] = "Years: $byLife later edition" . ($byLife === 1 ? '' : 's') . ' or translation' . ($byLife === 1 ? '' : 's')
+                . ' of writers who lived in those years ' . ($byLife === 1 ? 'is' : 'are') . ' included (by the writer\'s '
+                . 'dates, not the edition\'s); for editions printed in those years only, give collection eebo-tcp, '
+                . 'evans-tcp or ecco-tcp.';
         }
         if ($noYear > 0) {
             $notes[] = "Works without a known year are excluded by a year filter ($noYear of them matched the other filters).";
         }
         if ($ids === []) {
             $msg = 'No works in the library match these filters: ' . $this->describe() . '.';
-            if ($authorKey !== null) {
+            if ($ambiguousAuthors !== []) {
+                $msg .= ' Writers with that name in the library: ' . implode('; ', array_map(
+                    static fn (string $n): string => Text::inert(Text::oneLine($n, 80)), $ambiguousAuthors))
+                    . '. Give the full name of the one meant.';
+            } elseif ($authorKey !== null) {
                 $similar = self::similarAuthors($works, $authorKey);
                 $msg .= $similar !== [] ? ' Authors with similar names: ' . implode('; ', $similar) . '.'
                     : ' Check the spelling of the author, or try only the surname.';
@@ -156,6 +181,183 @@ final class Filters
         }
         $own = $church !== null ? array_values(array_intersect($church['own'], $ids)) : [];
         return ['ids' => $ids, 'notes' => $notes, 'own' => $own, 'own_body' => $own !== [] ? $church['own_body'] : null];
+    }
+
+    /**
+     * True when a work outside the year range is a later edition or translation (or undated) of a writer who
+     * wrote in the range: Athanasius (296–373) in an 1892 translation for years 300-400, Owen's Works (1850) for
+     * up to 1700. Not an edition from the writer's own lifetime: its own year says when it was written.
+     * @param array{0: int, 1: int}|null $life [first year of writing, year of death] (Store::authorLives)
+     */
+    public static function livedThen(?array $life, ?int $year, ?int $from, ?int $to): bool
+    {
+        if ($life === null || ($year !== null && $year <= $life[1])) {
+            return false;
+        }
+        // Wrote in the range for a good part of it: at least LIVED_YEARS of overlap, or half of a shorter range
+        // (Sibbes, writing 1597-1635, is not a writer of 1550-1600; Luther is one of 1517-1530).
+        $overlap = min($life[1], $to ?? PHP_INT_MAX) - max($life[0], $from ?? PHP_INT_MIN);
+        $need = $from !== null && $to !== null ? min(self::LIVED_YEARS, intdiv($to - $from, 2)) : self::LIVED_YEARS;
+        return $overlap >= $need;
+    }
+
+    private const LIVED_YEARS = 15;
+
+    /**
+     * Words in front of a name that the library's author names leave out ("St. Augustine", "Saint John
+     * Chrysostom", "Pope Gregory"), tried only when the name as given matches no author.
+     */
+    private const NAME_TITLES = ['st', 'saint', 's', 'ste', 'san', 'santo', 'sancta', 'sanctus', 'blessed', 'bl',
+        'venerable', 'ven', 'the', 'pope', 'rev', 'revd', 'reverend', 'dr', 'doctor', 'father', 'fr', 'bishop',
+        'archbishop', 'abbot', 'brother', 'sister', 'mother', 'sir', 'mr', 'mrs', 'cardinal', 'rabbi', 'apostle'];
+
+    /**
+     * What an author filter matches: the name as given, contained in a work's author name (or its slug), as
+     * always; when that matches nobody, the name without titles in front ("St.", "Saint", "Pope") and without
+     * a place or epithet after it ("of Hippo", "the Great"), as whole words; and then the other names the same
+     * writer is filed under (Store::sameWriter: "John Calvin" also finds "Jean Calvin"). Notes say what was done.
+     * Keys padded with spaces match whole words only (authorMatches).
+     * @param array<int,array> $works
+     * @return array{keys: list<string>, notes: list<string>}
+     */
+    public static function authorKeys(Store $store, array $works, string $author): array
+    {
+        $key = Text::looseKey($author);
+        $keys = [$key];
+        $notes = [];
+        $ambiguous = [];
+        $names = self::authorNames($works, $keys);
+        if ($names === [] && $key !== '') {
+            foreach (self::plainNames($key) as $alt) {
+                $found = self::authorNames($works, [" $alt "]);
+                if ($found === []) {
+                    continue;
+                }
+                // Only one writer: the name itself ("St. Basil" -> Basil, not Basil Manly), or names that are one
+                // person's ("Rev. Spurgeon" -> Charles Spurgeon, Charles H. Spurgeon). Several writers ("St. John",
+                // "Gregory of Nazianzus" -> every Gregory) stay an error that lists them: an author filter vouches
+                // for whose words these are.
+                $exact = array_values(array_filter(array_map('strval', array_keys($found)),
+                    static fn (string $n): bool => Text::looseKey($n) === $alt));
+                if (count($exact) === 1) {
+                    $keys = ['=' . $alt];
+                    $names = [$exact[0] => true];
+                    $others = array_values(array_diff(array_map('strval', array_keys($found)), $exact));
+                } elseif (self::oneWriter(array_map('strval', array_keys($found)))) {
+                    $keys = [" $alt "];
+                    $names = $found;
+                    $others = [];
+                } else {
+                    $ambiguous = array_slice(array_map('strval', array_keys($found)), 0, 12);
+                    break;
+                }
+                $notes[] = 'Author "' . Text::echo($author, 60) . '" matched as "' . $alt . '": the library files '
+                    . 'names without titles such as "St." or places such as "of Hippo".'
+                    . ($others !== [] ? ' Other writers with this name: ' . implode('; ', array_map(
+                        static fn (string $o): string => Text::inert(Text::oneLine($o, 80)), array_slice($others, 0, 6))) . '.' : '');
+                break;
+            }
+        }
+        $more = [];
+        $same = $store->sameWriter();
+        foreach (array_keys($names) as $name) {
+            foreach ($same[$name] ?? [] as $other) {
+                if (!isset($names[$other])) {
+                    $more[$other] = true;
+                }
+            }
+        }
+        if ($more !== []) {
+            $other = array_keys($more);
+            foreach ($other as $o) {
+                $keys[] = ' ' . Text::looseKey($o) . ' ';
+            }
+            $shown = array_map(static fn (string $o): string => '"' . Text::inert(Text::oneLine($o, 80)) . '"',
+                array_slice($other, 0, 5));
+            $notes[] = 'Also included: works filed under ' . implode(', ', $shown)
+                . (count($other) > 5 ? ' and others' : '') . ' (the same writer, with the same dates).';
+        }
+        return ['keys' => $keys, 'notes' => $notes, 'ambiguous' => $ambiguous];
+    }
+
+    /** Names that are one person's: the same first and last word ("Charles Spurgeon", "Charles H. Spurgeon"). */
+    private static function oneWriter(array $names): bool
+    {
+        $ends = [];
+        foreach ($names as $n) {
+            $w = explode(' ', Text::looseKey($n));
+            $ends[$w[0] . ' ' . end($w)] = true;
+        }
+        return count($ends) === 1;
+    }
+
+    /**
+     * True when the work's author (or slug) holds one of the keys (Filters::authorKeys): keys padded with spaces
+     * match whole words, keys starting with "=" the whole name, others any part of it.
+     */
+    public static function authorMatches(array $w, array $keys): bool
+    {
+        $a = ' ' . Text::looseKey($w['author']) . ' ';
+        $s = ' ' . Text::looseKey($w['author_slug']) . ' ';
+        foreach ($keys as $k) {
+            if ($k === '') {
+                continue;
+            }
+            if ($k[0] === '=') {
+                if (trim($a) === substr($k, 1) || trim($s) === substr($k, 1)) {
+                    return true;
+                }
+            } elseif (str_contains($a, $k) || str_contains($s, $k)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @return array<string,true> distinct author names of the works the keys match */
+    private static function authorNames(array $works, array $keys): array
+    {
+        $names = [];
+        foreach ($works as $w) {
+            if (!isset($names[$w['author']]) && self::authorMatches($w, $keys)) {
+                $names[$w['author']] = true;
+            }
+        }
+        return $names;
+    }
+
+    /**
+     * A loose name without titles in front, without "of ..." or "the Great/Elder/Younger" after, and both:
+     * "st augustine of hippo" -> ["augustine of hippo", "st augustine", "augustine"] (only forms that differ).
+     * @return list<string>
+     */
+    public static function plainNames(string $key): array
+    {
+        $words = explode(' ', $key);
+        $front = $words;
+        while (count($front) > 1 && in_array($front[0], self::NAME_TITLES, true)) {
+            array_shift($front);
+        }
+        $cut = static function (array $w): array {
+            $i = array_search('of', $w, true);
+            if ($i !== false && $i > 0) {
+                $w = array_slice($w, 0, (int) $i);
+            }
+            $n = count($w);
+            if ($n > 2 && $w[$n - 2] === 'the' && in_array($w[$n - 1], ['great', 'elder', 'younger', 'confessor',
+                    'theologian', 'venerable'], true)) {
+                $w = array_slice($w, 0, $n - 2);
+            }
+            return $w;
+        };
+        $out = [];
+        foreach ([$front, $cut($words), $cut($front)] as $w) {
+            $alt = implode(' ', $w);
+            if ($alt !== '' && $alt !== $key && !in_array($alt, $out, true)) {
+                $out[] = $alt;
+            }
+        }
+        return $out;
     }
 
     /**
@@ -243,6 +445,19 @@ final class Search
      * place is a rule and not a score. Measured on tests/eval/denominations.jsonl: DESIGN.md section 11.
      */
     public const OWN_TOP = 10;
+    /**
+     * Works a question names by title ("Shorter Catechism ...", "Nicene Creed ...", "Apostles' Creed"): their best
+     * NAMED_TOP passages are added to the passages sent to the reranker (in place of the last of the others, so a
+     * search costs the same), and the reranker places them like any other. Short primary texts named in a question
+     * were often not among the 50 at all, though the reranker rates them as high as anything once there (the
+     * Shorter Catechism's first answer 0.94, the Nicene Creed 0.94; 2026-11-19 testers). A pair of neighbouring
+     * words of the question names the works whose titles hold both (at most two words apart), when there are
+     * 1 to NAMED_MAX_WORKS of them.
+     */
+    public const NAMED_TOP = 10;
+    public const NAMED_MAX_WORKS = 12;
+    private const NAMED_PAIRS = 12;
+    private const NAMED_TITLE_WORDS = 4;
     public const OWN_FLOOR = self::MATCH_LOOSE;
     public const KEYWORD_TOP = 100;
     public const VECTOR_TOP = 100;
@@ -376,6 +591,14 @@ final class Search
         $pool = max(self::FUSE_TOP, $this->rerankCandidates);
         $fused = self::rrf([$keyword, $vector], self::RRF_K, $pool);
         $ownList = $own !== [] ? $this->ownList($tokens, $qv, $own) : [];
+        $namedList = [];
+        if (!$filters->churchOnly() && ($workIds === null || count($workIds) > self::FEW_WORKS)) {
+            $named = $this->namedWorks($tokens, $workIds);
+            $this->trace['named_works'] = count($named);
+            if ($named !== []) {
+                $namedList = self::takeTurns($this->ownList($tokens, $qv, $named, 6 * self::NAMED_TOP, 'named'), self::NAMED_TOP);
+            }
+        }
         if ($ownList !== []) {
             // At the front: only the first rerank_candidates (after any quotation hits) are sent to the reranker.
             $rest = array_values(array_diff($fused, $ownList));
@@ -383,6 +606,17 @@ final class Search
         }
         if ($phrase !== []) {
             $fused = array_values(array_unique(array_merge($phrase, $fused)));
+        }
+        if ($namedList !== []) {
+            // Inside the first rerank_candidates, at the end of them (without re-ranking they stay low).
+            $cap = max(2, $this->rerankCandidates);
+            $missing = array_values(array_diff($namedList, array_slice($fused, 0, $cap)));
+            if ($missing !== []) {
+                $keep = max(0, $cap - count($missing));
+                $fused = array_values(array_unique(array_merge(array_slice($fused, 0, $keep), $missing,
+                    array_slice($fused, $keep))));
+            }
+            $this->trace['named_added'] = count($missing);
         }
         $cands = $this->prepare($this->load($fused));
 
@@ -448,6 +682,36 @@ final class Search
     }
 
     /**
+     * A question about what a group of writers held ("what did the Puritans say about assurance") finds mostly
+     * later books ABOUT the group, which use its name: the writers seldom used it, and the reranker rated Thomas
+     * Brooks on assurance 0.72 with "what did the Puritans say about" and 0.86 without (2026-11-19 testers,
+     * findings/doctrine-01..05). The note tells the AI how to reach the writers' own words (search_library only, when
+     * no author, work, collection or church filter is set: Tools::searchLibrary; not the public search, whose kept
+     * answers are those without notes).
+     * @param list<string> $tokens
+     */
+    public static function groupHint(array $tokens): ?string
+    {
+        $t = array_flip($tokens);
+        if (isset($t['puritan']) || isset($t['puritans']) || isset($t['puritanism'])) {
+            return 'For what the Puritans themselves wrote, search the subject again with author set to Puritan writers '
+                . '(for example "Thomas Brooks", "John Owen", "Richard Baxter", "Thomas Watson", "Richard Sibbes") or with '
+                . 'collection "eebo-tcp": they seldom called themselves Puritans, so results that use the word are mostly '
+                . 'later histories about them.';
+        }
+        if ((isset($t['fathers']) && (isset($t['church']) || isset($t['early']))) || isset($t['patristic'])) {
+            return 'For the Church Fathers\' own words, search the subject again with collection "ccel-schaff" (the '
+                . 'Fathers in Schaff\'s translation) or with author set to a Father (for example "Augustine", "Chrysostom", '
+                . '"Athanasius").';
+        }
+        if (isset($t['reformers'])) {
+            return 'For the Reformers\' own words, search the subject again with author set to one of them (for example '
+                . '"Calvin", "Luther", "Zwingli", "Bullinger", "Beza").';
+        }
+        return null;
+    }
+
+    /**
      * Marks each hit with how well it matches: 'exact' (it holds the query word for word), or by the
      * reranker's score 'close', 'partial' or 'loose'; null when it was not scored.
      * @param list<array> $hits  @param list<int> $phraseIds  @return list<array>
@@ -502,7 +766,8 @@ final class Search
      */
     public function keywordList(array $tokens, ?array $workIds): array
     {
-        $kw = Text::keywordTokens($tokens);
+        // "God's" is searched as "god", which also finds "Gods" and "God" (Text::unpossessive).
+        $kw = Text::keywordTokens(array_map([Text::class, 'unpossessive'], $tokens));   // "what's" -> "what": a stopword
         if (array_filter($kw, static fn (string $t): bool => !Text::isStopword($t)) === []) {
             // Only very common words ("to be or not to be"): ranking every passage that has them
             // all would score most of the library, so they are matched as a phrase instead, and a
@@ -510,7 +775,7 @@ final class Search
             $this->trace['keyword'] = 'common words: phrase';
             $phrase = array_slice($tokens, 0, self::MAX_COMMON_PHRASE);
             return count($phrase) < 2 ? []
-                : array_map('intval', array_keys($this->store->keywordSearch(Text::ftsPhrase($phrase), $workIds, self::KEYWORD_TOP)));
+                : array_map('intval', array_keys($this->store->keywordSearch(Text::ftsPhraseAny($phrase), $workIds, self::KEYWORD_TOP)));
         }
         $hits = $this->store->keywordSearch(Text::ftsAll($kw), $workIds, self::KEYWORD_TOP);
         if (count($hits) < self::RELAX_BELOW && count($kw) >= 3) {
@@ -639,7 +904,7 @@ final class Search
                 . self::MAX_COMMON_WORDS . '). Use a shorter, distinctive part of it.');
         }
         ['ids' => $workIds, 'notes' => $notes, 'own' => $own, 'own_body' => $ownBody] = $filters->resolve($this->store);
-        $match = Text::ftsPhrase($tokens);
+        $match = Text::ftsPhraseAny($tokens);
         $method = 'exact phrase, in book order';
         $t = microtime(true);
         $this->requireTime();
@@ -1004,28 +1269,118 @@ final class Search
     }
 
     /**
-     * The best OWN_TOP passages of the named body's own present-day documents ($own work ids), by keyword and,
+     * Works the question names by title (NAMED_TOP above): for each pair of neighbouring words of the question
+     * (stopwords, numbers and words under 3 letters left out), the works whose title holds both at most two words
+     * apart, when 1 to NAMED_MAX_WORKS works do. Only works the filters allow.
+     * @param list<string> $tokens  @param list<int>|null $workIds  @return list<int>
+     */
+    public function namedWorks(array $tokens, ?array $workIds): array
+    {
+        $content = array_values(array_filter(array_map([Text::class, 'unpossessive'], $tokens),
+            static fn (string $t): bool => !Text::isStopword($t) && mb_strlen($t) >= 3 && !ctype_digit($t)));
+        $named = [];
+        $seen = [];
+        for ($i = 0; $i + 1 < count($content) && count($seen) < self::NAMED_PAIRS; $i++) {
+            [$a, $b] = [$content[$i], $content[$i + 1]];
+            if ($a === $b || isset($seen["$a $b"])) {
+                continue;
+            }
+            $seen["$a $b"] = true;
+            try {
+                $hits = $this->store->workSearch('title : NEAR(' . Text::quote($a) . ' ' . Text::quote($b) . ', 2)',
+                    self::NAMED_MAX_WORKS + 1);
+            } catch (\PDOException $e) {
+                $this->log?->error('named_works_failed', ['error' => Text::logMessage($e)]);
+                return [];
+            }
+            if ($hits !== [] && count($hits) <= self::NAMED_MAX_WORKS) {
+                foreach ($this->store->works(array_map('intval', array_keys($hits))) as $id => $w) {
+                    // The pair is at least half the title's words: "Westminster Shorter Catechism", "The City of
+                    // God", not "A Treatise of the Lords Supper in Two Sermons" (a title only about the subject).
+                    if (count(self::titleWords((string) $w['title'])) <= self::NAMED_TITLE_WORDS) {
+                        $named[(int) $id] = true;
+                    }
+                }
+            }
+        }
+        $ids = array_map('intval', array_keys($named));
+        if ($workIds !== null) {
+            $ids = array_values(array_intersect($ids, $workIds));
+        }
+        // Smallest first, and no more passages in all than an exact meaning scan takes (no extra index scan):
+        // the short primary texts are what this is for.
+        $works = $this->store->works($ids);
+        usort($ids, static fn (int $a, int $b): int => [$works[$a]['n_passages'] ?? 0, $a] <=> [$works[$b]['n_passages'] ?? 0, $b]);
+        $out = [];
+        $passages = 0;
+        foreach (array_slice($ids, 0, 2 * self::NAMED_MAX_WORKS) as $id) {
+            $passages += (int) ($works[$id]['n_passages'] ?? 0);
+            if ($passages > $this->exactScanMax) {
+                break;
+            }
+            $out[] = $id;
+        }
+        return $out;
+    }
+
+    /**
+     * The best OWN_TOP (or $top) passages of the named body's own present-day documents ($own work ids; also the works a
+     * question names, namedWorks), by keyword and,
      * when the query vector is there, meaning (an exact scan: these are a few documents), fused.
      * @param list<string> $tokens  @param list<float>|null $qv  @param list<int> $own  @return list<int>
      */
-    private function ownList(array $tokens, ?array $qv, array $own): array
+    /**
+     * The first $n passage ids, each work taking a turn: the best of every work (in the order of their best), then
+     * the second of each, and so on. A one-passage creed named beside a 1,774-passage book on it still gets its place.
+     * @param list<int> $ids best first  @return list<int>
+     */
+    public static function takeTurns(array $ids, int $n): array
+    {
+        $byWork = [];
+        foreach ($ids as $id) {
+            $byWork[intdiv((int) $id, Store::SEQ_MULT)][] = (int) $id;
+        }
+        $out = [];
+        for ($round = 0; count($out) < $n; $round++) {
+            $added = false;
+            foreach ($byWork as $list) {
+                if (isset($list[$round]) && count($out) < $n) {
+                    $out[] = $list[$round];
+                    $added = true;
+                }
+            }
+            if (!$added) {
+                break;
+            }
+        }
+        return $out;
+    }
+
+    /** Distinct words of a title that count for naming it: no stopwords, numbers or words under 3 letters. @return list<string> */
+    public static function titleWords(string $title): array
+    {
+        return array_values(array_unique(array_filter(explode(' ', Text::looseKey(mb_substr($title, 0, 300))),
+            static fn (string $t): bool => mb_strlen($t) >= 3 && !Text::isStopword($t) && !ctype_digit($t))));
+    }
+
+    private function ownList(array $tokens, ?array $qv, array $own, int $top = self::OWN_TOP, string $what = 'own'): array
     {
         $lists = [];
         try {
             $lists[] = $this->keywordList($tokens, $own);
         } catch (\PDOException $e) {
-            $this->log?->error('keyword_search_failed', ['error' => Text::logMessage($e), 'own' => true]);
+            $this->log?->error('keyword_search_failed', ['error' => Text::logMessage($e), $what => true]);
         }
         if ($qv !== null && $this->remaining() >= self::MIN_SECONDS_SCAN) {
             try {
                 $ignored = [];
                 $lists[] = $this->vectorSearch($qv, $own, self::VECTOR_TOP, $ignored);
             } catch (\RuntimeException | \LogicException $e) {
-                $this->log?->error('vector_scan_failed', ['error' => Text::logMessage($e), 'own' => true]);
+                $this->log?->error('vector_scan_failed', ['error' => Text::logMessage($e), $what => true]);
             }
         }
-        $out = self::rrf($lists, self::RRF_K, self::OWN_TOP);
-        $this->trace['own_candidates'] = count($out);
+        $out = self::rrf($lists, self::RRF_K, $top);
+        $this->trace[$what . '_candidates'] = count($out);
         return $out;
     }
 
@@ -1094,7 +1449,7 @@ final class Search
         }
         $t = microtime(true);
         try {
-            $match = Text::ftsPhrase($tokens);
+            $match = Text::ftsPhraseAny($tokens);
             $n = $this->store->countMatches($match, $workIds, self::PHRASE_MAX + 1);
             $ids = $n >= 1 && $n <= self::PHRASE_MAX
                 ? array_keys($this->store->keywordSearch($match, $workIds, self::PHRASE_MAX)) : [];

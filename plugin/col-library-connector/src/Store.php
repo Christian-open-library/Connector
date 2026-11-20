@@ -52,6 +52,8 @@ final class Store
     private array $workCache = [];
     /** @var array<string,string>|null author name => "dates, note"; null until read ([] for a build without the table) */
     private ?array $authorNotes = null;
+    private ?array $sameWriter = null;
+    private ?array $authorLives = null;
     /** @var array<int,array>|null church records by work id (Churches); [] for a build without them */
     private ?array $churchRecords = null;
     /** @var array<string,array>|null church bodies by name */
@@ -1030,6 +1032,96 @@ final class Store
             }
         }
         return $this->authorNotes;
+    }
+
+    /**
+     * Author name => the other names the same writer is filed under in the works table: names with the same
+     * surname (last word) and the same dates in the authors table, e.g. "John Calvin" => ["Jean Calvin"] (the
+     * EEBO translations of the 1500s keep "Jean"), "Ulrich Zwingli" => ["Huldreich Zwingli"]. Names without
+     * dates are never joined. Builds without the authors table have none.
+     * @return array<string, list<string>>
+     */
+    public function sameWriter(): array
+    {
+        if ($this->sameWriter === null) {
+            $this->sameWriter = [];
+            try {
+                if ($this->hasTables('authors')) {
+                    $this->sameWriter = self::sameWriterGroups($this->run('SELECT name, dates FROM authors')->fetchAll());
+                }
+            } catch (\PDOException $e) {
+                $this->sameWriter = [];
+            }
+        }
+        return $this->sameWriter;
+    }
+
+    /**
+     * Author name => [first year of writing, year of death] from the authors table's dates: "1616–1683" ->
+     * [1636, 1683] (20 years after birth), "c. 347–407" -> [367, 407], "fl. 366–384" -> [366, 384]. Dates before
+     * Christ, single years and empty dates are left out. Used by year filters (Filters::resolve).
+     * @return array<string, array{0: int, 1: int}>
+     */
+    public function authorLives(): array
+    {
+        if ($this->authorLives === null) {
+            $this->authorLives = [];
+            try {
+                if ($this->hasTables('authors')) {
+                    foreach ($this->run('SELECT name, dates FROM authors')->fetchAll() as $a) {
+                        $life = self::lifeOf((string) $a['dates']);
+                        if ($life !== null) {
+                            $this->authorLives[(string) $a['name']] = $life;
+                        }
+                    }
+                }
+            } catch (\PDOException $e) {
+                $this->authorLives = [];
+            }
+        }
+        return $this->authorLives;
+    }
+
+    /** @return array{0: int, 1: int}|null see authorLives */
+    public static function lifeOf(string $dates): ?array
+    {
+        if (preg_match('/^(fl\. )?(?:c\. )?(\d{2,4})–(?:c\. )?(\d{2,4})$/u', trim($dates), $m) !== 1) {
+            return null;
+        }
+        [$from, $to] = [(int) $m[2], (int) $m[3]];
+        if ($to < $from || $to - $from > 110) {
+            return null;
+        }
+        return [$m[1] !== '' ? $from : min($from + 20, $to), $to];
+    }
+
+    /**
+     * Store::sameWriter from authors rows (name, dates).
+     * @param list<array{name: string, dates: string}> $rows  @return array<string, list<string>>
+     */
+    public static function sameWriterGroups(array $rows): array
+    {
+        $groups = [];
+        foreach ($rows as $a) {
+            $name = (string) $a['name'];
+            $dates = trim((string) $a['dates']);
+            $words = explode(' ', Text::looseKey($name));
+            $last = (string) end($words);
+            if ($last === '' || preg_match('/\d{3}/', $dates) !== 1) {
+                continue;
+            }
+            $groups[$last . '|' . $dates][] = $name;
+        }
+        $out = [];
+        foreach ($groups as $names) {
+            $names = array_values(array_unique($names));
+            if (count($names) > 1 && count($names) <= 4) {
+                foreach ($names as $n) {
+                    $out[$n] = array_values(array_diff($names, [$n]));
+                }
+            }
+        }
+        return $out;
     }
 
     private static function marks(array $values): string

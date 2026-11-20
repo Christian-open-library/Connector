@@ -212,6 +212,44 @@ final class Text
     }
 
     /**
+     * "god's" -> "god": a possessive without its ending. FTS5 splits "God's" into "god" + "s", so a keyword
+     * search for "god's" would miss "Gods" (the usual old spelling) and "God"; the bare word matches all three.
+     */
+    public static function unpossessive(string $token): string
+    {
+        return preg_match("/^(\\p{L}[\\p{L}\\p{M}]*)'s$/u", $token, $m) === 1 ? $m[1] : $token;
+    }
+
+    /**
+     * As ftsPhrase, but each possessive (at most POSSESSIVE_FORMS of them) also matches without its apostrophe:
+     * "the Lord's Supper" finds "the Lords Supper" too. One phrase when there is no possessive.
+     * @param list<string> $tokens
+     */
+    public static function ftsPhraseAny(array $tokens, string $column = 'body'): string
+    {
+        $forms = [[]];
+        $n = 0;
+        foreach ($tokens as $t) {
+            $base = self::unpossessive($t);
+            $alts = $base !== $t && $n++ < self::POSSESSIVE_FORMS ? [$t, str_ends_with($base, 's') ? $base : $base . 's'] : [$t];
+            $next = [];
+            foreach ($forms as $f) {
+                foreach ($alts as $a) {
+                    $next[] = array_merge($f, [$a]);
+                }
+            }
+            $forms = $next;
+        }
+        if (count($forms) === 1) {
+            return self::ftsPhrase($tokens, $column);
+        }
+        return $column . ' : (' . implode(' OR ', array_map(static fn (array $f): string => self::quote(implode(' ', $f)),
+            $forms)) . ')';
+    }
+
+    public const POSSESSIVE_FORMS = 2;
+
+    /**
      * FTS5 phrase query restricted to one column: body : "the just shall live by faith".
      * $column must be a column name from this code, never user input.
      * @param list<string> $tokens

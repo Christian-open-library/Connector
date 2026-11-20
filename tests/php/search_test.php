@@ -277,15 +277,37 @@ function test_filters(): void
         assert_same([104], array_values(array_unique(array_map(fn ($h) => $h['work_id'], $r->hits))), "author $author");
     }
     $r = $s->best('faith', new Filters(yearFrom: 1600), 20);
-    assert_same([], array_diff(array_unique(array_column($r->hits, 'work_id')), [101, 103]), 'only works with a year >= 1600');
-    assert_contains('Works without a known year are excluded', implode(' ', $r->notes));
-    assert_contains('Filters: from 1600 (2 works).', implode(' ', $r->notes));
+    assert_same([], array_diff(array_unique(array_column($r->hits, 'work_id')), [101, 102, 103]),
+        'works from 1600 on, and Owen (1616–1683) in an undated edition');
+    assert_contains('Works without a known year are excluded', implode(' ', $r->notes), 'Bèze: no year, no dates');
+    assert_contains('Filters: from 1600 (3 works).', implode(' ', $r->notes));
+    assert_contains('Years: 1 later edition or translation of writers who lived in those years is included',
+        implode(' ', $r->notes));
+    $r = $s->best('faith', new Filters(yearTo: 450), 20);
+    assert_same([103], array_values(array_unique(array_column($r->hits, 'work_id'))),
+        'Augustine (354–430) in an 1886 translation counts as his own years; Owen does not');
+    assert_true(Filters::livedThen([374, 430], 1886, 300, 400), 'a later translation of a writer of those years');
+    assert_false(Filters::livedThen([1636, 1683], 1668, 1600, 1650), 'an edition of his own lifetime has its own year');
+    assert_true(Filters::livedThen([1636, 1683], null, null, 1660), 'undated');
+    assert_false(Filters::livedThen(null, 1850, null, 1700));
+    assert_false(Filters::livedThen([1597, 1635], 1862, 1550, 1600), 'three years of overlap is not enough');
+    assert_true(Filters::livedThen([1503, 1546], 1915, 1517, 1530), 'a short range: half of it');
+    assert_false(Filters::livedThen([1698, 1743], 1822, null, 1700), 'Neal wrote after 1700');
+    assert_same([1636, 1683], Store::lifeOf('1616–1683'));
+    assert_same([367, 407], Store::lifeOf('c. 347–407'));
+    assert_same([366, 384], Store::lifeOf('fl. 366–384'));
+    assert_same(null, Store::lifeOf('c. 525–c. 456 BC'));
+    assert_same(null, Store::lifeOf('d. 1664'));
     $r = $s->best('mortification', new Filters(collection: 'ccel'), 20);
     assert_same([102], array_values(array_unique(array_column($r->hits, 'work_id'))));
     $r = $s->best('grace', new Filters(workId: 103), 20);
     assert_same([103], array_values(array_unique(array_column($r->hits, 'work_id'))));
     $r = $s->best('sin', new Filters(author: 'owen', yearFrom: 1600, yearTo: 1700), 20);
-    assert_same([101], array_values(array_unique(array_column($r->hits, 'work_id'))), 'combined filters');
+    $got = array_values(array_unique(array_column($r->hits, 'work_id')));
+    sort($got);
+    assert_same([101, 102], $got, 'combined filters (102: Owen undated, by his years)');
+    $r = $s->best('sin', new Filters(author: 'owen', yearFrom: 1600, yearTo: 1700, collection: 'eebo-tcp'), 20);
+    assert_same([101], array_values(array_unique(array_column($r->hits, 'work_id'))), 'original editions only');
 
     $e = assert_throws(SearchInputException::class, fn () => $s->best('sin', new Filters(author: 'owne'), 8));
     assert_contains('Authors with similar names: John Owen', $e->getMessage());
@@ -470,4 +492,34 @@ function test_past_the_personal_allowance_search_keeps_meaning_but_not_reranking
     assert_same('meaning + keyword search', $r->method);
     assert_contains('used today\'s re-ranked searches', implode(' ', $r->notes));
     assert_true($r->hits !== []);
+}
+
+function test_title_words_that_name_a_work(): void
+{
+    assert_same(['westminster', 'shorter', 'catechism'], Search::titleWords('Westminster Shorter Catechism'));
+    assert_same(['city', 'god'], Search::titleWords('The City of God'));
+    assert_same(['apostles', 'creed'], Search::titleWords("Apostles' Creed (1886)"), 'numbers and short words left out');
+    assert_true(count(Search::titleWords('A Treatise of the Lords Supper in Two Sermons')) > 4,
+        'a title only about the subject is not named by a pair of its words');
+}
+
+function test_named_works_take_turns(): void
+{
+    // work 44: many passages, work 868: one; work 9 two
+    $ids = [4400001, 4400002, 4400003, 86800000, 900001, 4400004, 900002];
+    assert_same([4400001, 86800000, 900001, 4400002], Search::takeTurns($ids, 4));
+    assert_same([4400001, 86800000, 900001, 4400002, 900002, 4400003, 4400004], Search::takeTurns($ids, 10));
+    assert_same([], Search::takeTurns([], 5));
+}
+
+function test_a_group_of_writers_gets_a_hint(): void
+{
+    $s = search();
+    assert_contains('For what the Puritans themselves wrote', (string) Search::groupHint($s->queryTokens('What did the Puritans say about assurance?')));
+    assert_contains('Church Fathers', (string) Search::groupHint($s->queryTokens('early church fathers on baptism')));
+    assert_contains('Reformers', (string) Search::groupHint($s->queryTokens('the Reformers on images')));
+    assert_same(null, Search::groupHint($s->queryTokens('the fathers of the faithful')), 'fathers alone is not the Fathers');
+    assert_same(null, Search::groupHint($s->queryTokens('assurance of salvation')));
+    assert_not_contains('For what the Puritans', implode(' ', $s->best('puritan sabbath', new Filters(), 5)->notes),
+        'Search itself adds no note (the public search keeps only answers without notes); search_library does');
 }
