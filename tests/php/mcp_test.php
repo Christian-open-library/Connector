@@ -317,7 +317,7 @@ function test_tools_call_exception_is_internal_error_without_details(): void
     // The details go to the server's log instead (PHP's error log while log_level is off).
     $log = col_error_log();
     assert_contains('"event":"internal_error"', $log);
-    assert_contains('"tool":"explodes","exception":"RuntimeException","message":"database /home/secret/', $log);
+    assert_contains('"tool":"explodes","outcome":"crash","exception":"RuntimeException","message":"database /home/secret/', $log);
 }
 
 function test_parse_error(): void

@@ -502,12 +502,14 @@ final class Mcp
         if ($ctx->deadline - microtime(true) < self::MIN_SECONDS_LEFT) {
             // Only reachable inside a long batch: all calls of one HTTP request share its deadline.
             $this->trace['out_of_time'] = true;
+            $this->trace['outcome'] = 'timeout';
             return [['content' => [['type' => 'text', 'text' => 'This request ran out of time before this tool '
                 . 'call could start. Send the call again on its own.']], 'isError' => true], null];
         }
         $limited = $ctx->limits->takeCall();
         if ($limited !== null) {
             $this->trace['rate_limited'] = true;
+            $this->trace['outcome'] = 'limited';
             return [['content' => [['type' => 'text', 'text' => $limited]], 'isError' => true], null];
         }
         $ctx->log->debug('tool_call', ['tool' => $name, 'arguments' => $args]);
@@ -530,7 +532,28 @@ final class Mcp
             $result['structuredContent'] = $out['structuredContent'];
         }
         $this->trace['is_error'] = $result['isError'];
+        $this->trace['outcome'] = self::outcome($result);
         return [$result, null];
+    }
+
+    /**
+     * What the answer said, for the log line and the daily failure counts (library-usage): 'not_as_asked',
+     * 'not_found' (also a verse no passage cites, a term no dictionary has, filters no work matches), 'no_close',
+     * 'error' (the tool refused its input) or 'ok'. Reads only the start of the answer (before its first numbered
+     * result, at most 4,000 characters), never the query; nothing read is logged. Calls stopped by a limit, out of
+     * time or crashed are logged as 'limited', 'timeout' and 'crash' instead.
+     */
+    public static function outcome(array $result): string
+    {
+        $text = $result['content'][0]['text'] ?? '';
+        $head = substr(explode("\n[1]", is_string($text) ? $text : '', 2)[0], 0, 4000);
+        return match (true) {
+            (bool) preg_match('/(?:^|\n)NOT FOUND AS ASKED\b/', $head) => 'not_as_asked',
+            (bool) preg_match('/(?:^|\n)(?:NOT FOUND\b|No passage in the library cites |No dictionary entry for |No works in the library match )/', $head) => 'not_found',
+            (bool) preg_match('/(?:^|\n)NO CLOSE MATCH\b/', $head) => 'no_close',
+            (bool) ($result['isError'] ?? false) => 'error',
+            default => 'ok',
+        };
     }
 
     /** @return array<string,array> tool definitions by name, with JSON objects kept as objects */
@@ -674,6 +697,9 @@ final class Mcp
 
     private function internalError(Context $ctx, \Throwable $e): void
     {
+        if (isset($this->trace['tool'])) {
+            $this->trace['outcome'] = 'crash';   // counted apart from 'error' (a tool's own refusal of bad input)
+        }
         $ctx->log->error('internal_error', $this->trace + [
             'exception' => get_class($e),
             'message' => self::clip($e->getMessage(), 500),

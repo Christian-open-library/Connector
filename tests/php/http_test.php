@@ -415,8 +415,26 @@ function test_requests_are_logged_without_key(): void
     $call = array_values(array_filter($events, fn ($e) => ($e['event'] ?? '') === 'mcp' && ($e['method'] ?? '') === 'tools/call'))[0];
     assert_same('echo_text', $call['tool']);
     assert_same(false, $call['is_error']);
+    assert_same('ok', $call['outcome']);
     $reject = end($events);
     assert_same(403, $reject['status']);
+}
+
+function test_log_outcome_reads_only_the_answer_header(): void
+{
+    $r = fn (string $t, bool $e = false) => \ColLibrary\Mcp::outcome(['content' => [['type' => 'text', 'text' => $t]], 'isError' => $e]);
+    assert_same('ok', $r("Results 1-8 for \"x\"\n\n[1] Owen, Mortification\nNOT FOUND in a passage is not a header"));
+    assert_same('not_found', $r("Results for \"x\"\nNOT FOUND: nothing in the library matches this query\n\n[1] a"));
+    assert_same('no_close', $r("Results 1-8\nNO CLOSE MATCH: these passages are related\n\n[1] a"));
+    assert_same('not_as_asked', $r("NOT FOUND AS ASKED: Packer -> Parker\n\n[1] a"));
+    assert_same('not_found', $r('NOT FOUND: no works found. Try fewer words', true));
+    assert_same('error', $r('Invalid arguments: limit must be 1 to 50', true));
+    assert_same('not_found', $r("Citations of Obadiah 1:22\n\nNo passage in the library cites Obadiah 1:22. Try looser filters"));
+    assert_same('not_found', $r('No dictionary entry for "zzz". Try another spelling', true));
+    assert_same('not_found', $r('No works in the library match these filters: author contains "X".', true));
+    assert_same('ok', $r("Citations of Jude 1:3\n\nNo passage cites Jude 1:3 itself; 4 passages across 2 works cite Jude 1 as a whole"));
+    assert_same('ok', $r("Results 1-8\nThe words NO CLOSE MATCH inside a line do not count\n\n[1] a"));
+    assert_same('ok', \ColLibrary\Mcp::outcome(['content' => [], 'isError' => false]));
 }
 
 // ------------------------------------------------------------------------------------------------

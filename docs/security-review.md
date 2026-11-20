@@ -16,6 +16,26 @@ Anthropic's AI; none was an outside audit.*
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
 
+## 20 November 2026, evening: counting searches that found nothing
+
+The connector's log line for each tool call now also says what kind of answer it gave: a match, "no close
+match", "not found", a corrected name, a refusal of bad input, or a call stopped by a limit, time or a fault. It
+reads this from the start of the answer, never from the search words, and logs only the one label. Once a day the
+server's private usage report adds these labels up per tool, and counts searches made within two minutes of the
+same person's last one. Only the totals leave the server: no person IDs and no search words. The privacy page
+says so.
+
+Question checked: does this record anything about what people search for? No.
+- The label is one of eight fixed words. Search words are still never logged (the troubleshooting switch is off).
+- The person ID was already in the log. The new counts use it to spot quick repeat searches, inside the report
+  only, and print totals.
+- Nothing changes for sign-in, the daily limits or the documents used by permission.
+
+A review (Claude) read the change before release. **It found 3 issues and all were fixed before release:** calls
+stopped by a limit or a fault were not labeled (now counted apart from refused input), a test could fail for a
+few minutes after midnight UTC, and the weekly summary was too long for the alert it goes in. Tests:
+`tests/php/http_test.php`, `tests/php/mcp_test.php`.
+
 ## 20 November 2026, later: the tradition filter and Bible-verse order
 
 Two changes:
