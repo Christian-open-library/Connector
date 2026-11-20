@@ -32,7 +32,7 @@ Question checked: does either let someone make the server do much more work, or 
 - Neither change touches sign-in, the daily limits or the documents used by permission (their per-search and
   daily limits apply as before). Both only change which public passages come first or are included.
 
-Tests: `tests/php/church_test.php`, `tests/php/subject_test.php`. No issues were found in review.
+A review (Claude) read the change before release. **It found 3 issues and all were fixed before release:** a few book titles were taken as the wrong Bible book ("the Rev. Mr. ..." as Revelation), a verse not looked up before could take over 4 seconds (now capped at 150 headings), and one error message still said "church records" for a tradition search. Tests: `tests/php/church_test.php`, `tests/php/subject_test.php`.
 
 ## 20 November 2026: search fixes after a round of testing
 
