@@ -42,7 +42,8 @@ final class Filters
             || $this->yearFrom !== null || $this->yearTo !== null || $this->churchOnly();
     }
 
-    /** True when only church records are wanted (a denomination or tradition filter). */
+    /** True for a denomination or tradition filter: church records only, and with a tradition alone also the works
+     *  of writers of that tradition (Churches::allowed). */
     public function churchOnly(): bool
     {
         return $this->denomination !== null || $this->tradition !== null;
@@ -70,7 +71,8 @@ final class Filters
             $parts[] = 'denomination "' . Text::echo($this->denomination, 80) . '"';
         }
         if ($this->tradition !== null) {
-            $parts[] = 'church records of the ' . $this->tradition . ' tradition';
+            $parts[] = $this->denomination === null ? 'the ' . $this->tradition . ' tradition (church records and writers)'
+                : 'church records of the ' . $this->tradition . ' tradition';
         }
         if ($this->yearFrom !== null && $this->yearTo !== null) {
             $parts[] = $this->yearFrom === $this->yearTo ? "year {$this->yearFrom}" : "years {$this->yearFrom}–{$this->yearTo}";
@@ -174,7 +176,9 @@ final class Filters
                 $msg .= ' ' . implode(' ', array_filter($church['notes'], static fn (string $n): bool
                     => !Churches::isRule($n)));
                 if ($church['ids'] !== []) {
-                    $msg .= ' The church records alone match ' . count($church['ids']) . ' works: loosen the other filters.';
+                    $msg .= ' The ' . ($this->denomination === null ? 'tradition' : 'church records') . ' alone match'
+                        . (count($church['ids']) === 1 ? 'es 1 work' : ' ' . count($church['ids']) . ' works')
+                        . ': loosen the other filters.';
                 }
             }
             throw new SearchInputException($msg);

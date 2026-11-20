@@ -411,7 +411,11 @@ final class Format
                     . " only {$r->chapterLabel} as a whole and " . ($one ? 'comes' : 'come') . ' after the others';
             }
         }
-        $top .= ". Passages $first-$last, earliest works first, one passage per work in turn:";
+        $top .= $r->onText > 0
+            ? ". Passages $first-$last: first the " . self::plural($r->onText, 'passage') . ' in commentaries, expositions '
+                . "and sermons on the text (by their heading or title), then the rest; earliest works first in each, one "
+                . 'passage per work in turn:'
+            : ". Passages $first-$last, earliest works first, one passage per work in turn:";
         $blocks = [];
         foreach ($r->hits as $i => $p) {
             $blocks[] = ['head' => self::passageHeader($p, $r->offset + $i + 1) . " · (cites {$p['cites']})"

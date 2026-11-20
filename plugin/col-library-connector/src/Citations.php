@@ -7,9 +7,10 @@
  * A citation matches when it is in the same book and chapter and its verses overlap the requested
  * ones (Rom 8:26-30 matches Rom 8:28); a request for a whole chapter matches every citation in it.
  * Citations of the whole chapter ("Rom. 8.") are included when asked for, after the others.
- * Order: within each of the two groups, works by year (unknown years last), one passage per work
- * per round; at most CAP citation rows are read (chapter by chapter in verse order, whole-chapter
- * citations last).
+ * Order: within each of the two groups, the passages that treat the reference as their subject first
+ * (commentaries, expositions and sermons on the text: Subject), then the rest; within each, works by
+ * year (unknown years last), one passage per work per round; at most CAP citation rows are read
+ * (chapter by chapter in verse order, whole-chapter citations last).
  * Memory: the rows read, and three small values per passage; what a passage cites is listed only
  * for the passages of the page shown.
  */
@@ -42,6 +43,7 @@ final class CitationResult
         public readonly int $offset,
         public readonly bool $capped,
         public readonly array $notes,
+        public readonly int $onText = 0,        // passages that treat the reference as their subject (listed first)
     ) {
     }
 }
@@ -53,6 +55,7 @@ final class Citations
     public const MAX_CHAPTERS = 10;        // chapters per request
     public const TEXT_VERSES = 5;          // verses of the reference shown per translation
     private const MAX_CITES_SHOWN = 3;     // citations listed after each passage
+    public const HEADINGS_MAX = 150;       // section headings read per call to order the passages (Subject)
 
     /** As Search::$promoteOwn: false when this person's documents used by permission are used up for today. */
     public bool $promoteOwn = true;
@@ -106,7 +109,8 @@ final class Citations
             $notes[] = Churches::ownCappedNote((string) $ownBody);
             $ownWorks = [];
         }
-        $order = self::order($passages, $years, $ownWorks);
+        $levels = $this->levels($ref, $passages, array_keys($works));
+        $order = self::order($passages, $years, $ownWorks, $levels);
         if ($ownWorks !== [] && $ownBody !== null && array_intersect_key($works, $ownWorks) !== []) {
             $notes[] = Churches::ownFirstNote($ownBody, 0);
         }
@@ -135,7 +139,8 @@ final class Citations
         $label = $this->bible->label($ref);
         $chapterLabel = $this->bible->label(new BibleRef($ref->book, $ref->chapter, null, $ref->endChapter, null));
         return new CitationResult($label, $filters->active() ? $filters->describe() : '', $this->texts($ref),
-            $hits, count($passages), count($works), $inNotes, $chapterOnly, $chapterLabel, $offset, $capped, $notes);
+            $hits, count($passages), count($works), $inNotes, $chapterOnly, $chapterLabel, $offset, $capped, $notes,
+            self::onText($passages, $levels));
     }
 
     /**
@@ -188,23 +193,84 @@ final class Citations
         return $out;
     }
 
+    /** How many passages of the first group (Citations::order) treat the reference as their subject: the ones
+     *  listed before the rest. @param array<int,array{group:int}> $passages @param array<int,int> $levels */
+    private static function onText(array $passages, array $levels): int
+    {
+        $first = min(array_column($passages, 'group') ?: [1]);
+        $n = 0;
+        foreach ($levels as $id => $level) {
+            $n += $level > 0 && ($passages[$id]['group'] ?? 0) === $first ? 1 : 0;
+        }
+        return $n;
+    }
+
+    /**
+     * How far each passage treats the reference as its subject (Subject: 2, 1 or 0); 0 for a passage that cites
+     * it only in a margin note.
+     * @param array<int, array{work_id:int, group:int, in_note:bool}> $passages by id
+     * @param list<int> $workIds
+     * @return array<int,int> by passage id
+     */
+    private function levels(BibleRef $ref, array $passages, array $workIds): array
+    {
+        $books = $this->store->bibleBooks();
+        if (!isset($books[$ref->book]) || $passages === []) {
+            return [];
+        }
+        $subject = new Subject($books, $ref->book, $ref->chapter, $ref->endChapter);
+        $records = $this->store->hasChurchRecords() ? $this->store->churchRecords() : [];
+        $workRows = $this->store->works($workIds);
+        $workLevels = $subject->works($workRows, array_fill_keys(array_keys($records), true));
+        $read = [[], [], []];   // passages whose headings are read: works on the book, other commentaries, sermons etc.
+        $levels = [];
+        foreach ($passages as $id => $p) {
+            if ($p['in_note']) {
+                continue;
+            }
+            $wl = $workLevels[$p['work_id']] ?? 0;
+            $w = $workRows[$p['work_id']] ?? null;
+            if ($wl > 0) {
+                $levels[(int) $id] = $wl;
+            }
+            if ($w !== null && !isset($records[$p['work_id']]) && Subject::readHeadings($w)) {
+                $read[$wl > 0 ? 0 : (($w['type'] ?? '') === 'commentary' ? 1 : 2)][] = (int) $id;
+            }
+        }
+        // At most HEADINGS_MAX headings (random reads: about 5 ms each on a spinning disk when not cached).
+        $ids = array_slice(array_merge(...$read), 0, self::HEADINGS_MAX);
+        foreach ($this->store->passageSections($ids) as $id => $section) {
+            $level = $subject->passage($section, $workLevels[$passages[$id]['work_id']] ?? 0);
+            if ($level > 0) {
+                $levels[$id] = $level;
+            } else {
+                unset($levels[$id]);   // a heading of another chapter: the work's level does not hold here
+            }
+        }
+        return $levels;
+    }
+
     /**
      * Passage ids in result order: group 1, then group 2; within each, a named body's own present-day
-     * documents ($ownWorks, DESIGN.md section 11) before the others, then works by year (unknown years
-     * last, ties by their first passage id), one passage per work per round, each work's passages
-     * in id order.
+     * documents ($ownWorks, DESIGN.md section 11) before the others; then the passages that treat the
+     * reference as their subject ($levels, Subject: 2, then 1) before the rest; within each of these, works
+     * by year (unknown years last, ties by their first passage id), one passage per work per round, each
+     * work's passages in id order.
      * @param array<int, array{work_id:int, group:int}> $passages by id
      * @param array<int, ?int> $years by work id
+     * @param array<int,int> $levels by passage id (missing: 0)
      * @return list<int>
      */
-    public static function order(array $passages, array $years, array $ownWorks = []): array
+    public static function order(array $passages, array $years, array $ownWorks = [], array $levels = []): array
     {
         ksort($passages);
-        $byWork = [1 => [], 2 => [], 3 => [], 4 => []];   // group 1 own, 1 others, 2 own, 2 others
+        $byWork = [];   // bucket (group, own first, level 2 first) => work id => passage ids
         foreach ($passages as $id => $p) {
-            $byWork[$p['group'] * 2 - (isset($ownWorks[$p['work_id']]) ? 1 : 0)][$p['work_id']][] = (int) $id;
+            $bucket = ($p['group'] * 2 - (isset($ownWorks[$p['work_id']]) ? 1 : 0)) * 3 + (2 - ($levels[$id] ?? 0));
+            $byWork[$bucket][$p['work_id']][] = (int) $id;
         }
-        $keys = [];   // passage id => (group, round, rank of its work) as one integer
+        ksort($byWork);
+        $keys = [];   // passage id => (bucket, round, rank of its work) as one integer
         foreach ($byWork as $group => $works) {
             uksort($works, static function (int $a, int $b) use ($works, $years): int {
                 $ya = $years[$a] ?? null;

@@ -54,6 +54,8 @@ final class Store
     private ?array $authorNotes = null;
     private ?array $sameWriter = null;
     private ?array $authorLives = null;
+    /** @var array<string,array{tradition:string,note:string}>|null author name => tradition and note (authors table) */
+    private ?array $authorTraditions = null;
     /** @var array<int,array>|null church records by work id (Churches); [] for a build without them */
     private ?array $churchRecords = null;
     /** @var array<string,array>|null church bodies by name */
@@ -668,6 +670,23 @@ final class Store
     }
 
     /**
+     * Section heading of each passage (id => heading, '' when none), for Subject; only the short column is read.
+     * @param list<int> $ids
+     * @return array<int,string>
+     */
+    public function passageSections(array $ids): array
+    {
+        $out = [];
+        foreach (array_chunk(array_values(array_unique($ids)), self::IN_CHUNK) as $chunk) {
+            $st = $this->run('SELECT id, section FROM passages WHERE id IN (' . self::marks($chunk) . ')', $chunk);
+            while (($r = $st->fetch(\PDO::FETCH_NUM)) !== false) {
+                $out[(int) $r[0]] = (string) ($r[1] ?? '');
+            }
+        }
+        return $out;
+    }
+
+    /**
      * Nave's and Torrey's topic links (topic_refs) covering any of verses $from-$to of a chapter,
      * or the whole chapter, with the topic's headword.
      * @return list<array{id:int, source:string, headword:string, norm:string, verse_start:?int, verse_end:?int}>
@@ -1080,6 +1099,29 @@ final class Store
             }
         }
         return $this->authorLives;
+    }
+
+    /**
+     * Author name => the tradition and note of the authors table (the books repository's authors.csv), for the
+     * tradition filter (Churches::writerTraditions). Builds without the table have none.
+     * @return array<string, array{tradition: string, note: string}>
+     */
+    public function authorTraditions(): array
+    {
+        if ($this->authorTraditions === null) {
+            $this->authorTraditions = [];
+            try {
+                if ($this->hasTables('authors')) {
+                    foreach ($this->run('SELECT name, tradition, note FROM authors')->fetchAll() as $a) {
+                        $this->authorTraditions[(string) $a['name']] = ['tradition' => trim((string) $a['tradition']),
+                            'note' => (string) $a['note']];
+                    }
+                }
+            } catch (\PDOException $e) {
+                $this->authorTraditions = [];
+            }
+        }
+        return $this->authorTraditions;
     }
 
     /** @return array{0: int, 1: int}|null see authorLives */

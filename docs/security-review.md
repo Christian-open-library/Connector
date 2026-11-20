@@ -1,6 +1,6 @@
 # Security reviews
 
-*Newest first: 20 November 2026 (search fixes after a round of testing); 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
+*Newest first: 20 November 2026, later (the tradition filter and Bible-verse order); 20 November 2026 (search fixes after a round of testing); 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
 website; everything changed since 10 November)
 and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
@@ -15,6 +15,24 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 20 November 2026, later: the tradition filter and Bible-verse order
+
+Two changes:
+
+- A search limited to one tradition ("Lutheran") now also finds writers of that tradition (Luther), using the
+  library's public list of authors. Before, it found only church records.
+- The Bible-verse tool now lists commentaries and sermons on the verse first. It tells them apart by each
+  passage's heading and its book's title.
+
+Question checked: does either let someone make the server do much more work, or see anything new? No.
+- The tradition filter reads the list of authors once, a small table already used for every result.
+- The verse tool reads at most 150 headings per request, in one database query. In testing, a verse not looked
+  up before took about 1 second on a slow disk, against 0.15 seconds before; repeats are fast.
+- Neither change touches sign-in, the daily limits or the documents used by permission (their per-search and
+  daily limits apply as before). Both only change which public passages come first or are included.
+
+Tests: `tests/php/church_test.php`, `tests/php/subject_test.php`. No issues were found in review.
 
 ## 20 November 2026: search fixes after a round of testing
 

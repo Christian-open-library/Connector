@@ -810,3 +810,80 @@ function test_find_works_lists_own_records_newest_first(): void
     preg_match_all('/^\[\d+\] work_id (\d+)/m', Fixture\text_of($r), $m);
     assert_same(['104', '103', '101'], $m[1]);
 }
+
+/** A copy of the church fixture where only 101 and 102 are church records: 103 (Augustine) and 104 are writers' works. */
+function writers_dir(): string
+{
+    static $dir = null;
+    if ($dir !== null) {
+        return $dir;
+    }
+    $src = church_dir();
+    $dir = col_tmpdir('church-writers');
+    foreach (['library.sqlite', 'vectors.bin', 'ids.bin', 'manifest.json', 'config.php'] as $f) {
+        if (is_file("$src/$f")) {
+            copy("$src/$f", "$dir/$f");
+        }
+    }
+    $db = new \PDO("sqlite:$dir/library.sqlite");
+    $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+    $db->exec("DELETE FROM church_records WHERE work_id IN (103, 104);
+        INSERT OR REPLACE INTO authors VALUES ('Théodore de Bèze', '1519–1605', 'Reformed', 'Genevan Reformer')");
+    $db = null;
+    return $dir;
+}
+
+function test_the_tradition_filter_also_takes_writers_of_the_tradition(): void
+{
+    $store = new Store(writers_dir());
+    $ids = static function (?string $tradition, ?string $denomination = null) use ($store): array {
+        $r = (new Filters(denomination: $denomination, tradition: $tradition))->resolve($store);
+        sort($r['ids']);
+        return $r['ids'];
+    };
+    assert_same([103], $ids('Catholic'), 'a Church Father counts as Catholic');
+    assert_same([103], $ids('Orthodox'), 'and as Orthodox');
+    assert_same([104], $ids('Reformed'), 'a writer by the tradition of the authors table');
+    assert_same([101, 102], $ids('Presbyterian'), 'church records stay; Owen\'s works here are records');
+    $r = (new Filters(denomination: 'PCUSA', tradition: 'Presbyterian'))->resolve($store);
+    assert_same([101], $r['ids'], 'with a denomination only that body\'s records, no writers');
+    $notes = implode("\n", (new Filters(tradition: 'Catholic'))->resolve($store)['notes']);
+    assert_contains('the works of 1 writer of the tradition (1 work', $notes);
+    assert_contains('the Catholic tradition (church records and writers)', $notes);
+    assert_not_contains(Churches::HISTORICAL_RULE, $notes, 'no church-record rule without church records');
+    try {
+        (new Filters(tradition: 'Methodist'))->resolve($store);
+        assert_true(false, 'no records and no writers is an error');
+    } catch (SearchInputException $e) {
+        assert_contains('No works in the library match these filters', $e->getMessage());
+        assert_contains('the library lists no writers of this tradition, so only church records', $e->getMessage());
+    }
+}
+
+function test_writer_traditions(): void
+{
+    $w = static fn (string $t, string $note = '', string $name = 'X'): array => Churches::writerTraditions($name, $t, $note);
+    assert_same(['Catholic', 'Orthodox'], $w('Church Father'));
+    assert_same(['Catholic'], $w('Medieval'));
+    assert_same(['Catholic'], $w('Roman Catholic'));
+    assert_same(['Congregational'], $w('Congregationalist'));
+    assert_same(['Moravian'], $w('Medieval', '', 'Jan Hus'));
+    assert_same([], $w('Medieval', '', 'John Wycliffe'));
+    foreach (['Other', 'Other Christian', 'Jewish', 'Philosopher', 'Classical', 'Brethren', '', 'Unknown value'] as $t) {
+        assert_same([], $w($t), "$t counts for no tradition");
+    }
+    assert_same(['Presbyterian'], $w('Puritan', 'English Presbyterian minister, Westminster Assembly member'));
+    assert_same(['Congregational'], $w('Puritan', 'English Puritan Independent minister'));
+    assert_same(['Congregational'], $w('Puritan', 'English-born Puritan minister, founder of Hartford, Connecticut'));
+    assert_same(['Baptist'], $w('Puritan', 'English Baptist preacher and writer, Bedford'));
+    assert_same(['Anglican'], $w('Puritan', 'English Cambridge theologian and preacher, Church of England'));
+    assert_same(['Presbyterian', 'Congregational'], $w('Puritan', 'English Nonconformist minister, Church of England, ejected 1662'),
+        'an ejected minister is not counted Anglican');
+    assert_same(['Presbyterian', 'Congregational'], $w('Puritan', 'English Puritan preacher, London'), 'no church named');
+    assert_same(['Presbyterian', 'Congregational'], $w('Puritan', 'Baptism-debate writer'), '"Baptism" is not "Baptist"');
+    foreach (Churches::WRITER_TRADITIONS as $t => $list) {
+        foreach ($list as $c) {
+            assert_true(in_array($c, Churches::TRADITIONS, true), "$t maps to a tradition of the filter ($c)");
+        }
+    }
+}

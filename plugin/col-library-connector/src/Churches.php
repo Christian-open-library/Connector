@@ -50,6 +50,63 @@ final class Churches
         'reformedchurch' => 'Reformed', 'restorationmovement' => 'Restorationist',
     ];
 
+    /**
+     * The traditions a writer counts for in the tradition filter, by the tradition of the books repository's
+     * authors.csv (DESIGN.md section 11). The Fathers wrote before East and West divided and count for both;
+     * medieval writers count for the (Western) Catholic tradition. Puritans count by their note (Puritan
+     * writers below). Values with no church tradition count for none: "Other" in authors.csv is Darwin,
+     * Confucius and the like, not the "Other" church shelf.
+     */
+    public const WRITER_TRADITIONS = [
+        'Presbyterian' => ['Presbyterian'], 'Reformed' => ['Reformed'], 'Baptist' => ['Baptist'],
+        'Methodist' => ['Methodist'], 'Anglican' => ['Anglican'], 'Lutheran' => ['Lutheran'], 'Quaker' => ['Quaker'],
+        'Anabaptist' => ['Anabaptist'], 'Congregationalist' => ['Congregational'], 'Roman Catholic' => ['Catholic'],
+        'Eastern Orthodox' => ['Orthodox'], 'Church Father' => ['Catholic', 'Orthodox'], 'Medieval' => ['Catholic'],
+        'Puritan' => [], 'Other Christian' => [], 'Brethren' => [], 'Jewish' => [], 'Philosopher' => [],
+        'Classical' => [], 'Other' => [], '' => [],
+    ];
+
+    /** Writers whose authors.csv value does not say their tradition: Hus's followers became the Moravians;
+     *  Wycliffe was neither Catholic in the filter's sense nor of a later church. */
+    public const WRITER_EXCEPTIONS = ['Jan Hus' => ['Moravian'], 'John Wycliffe' => []];
+
+    /**
+     * Puritans by the church named in their note: Presbyterian; Congregational (also Independent, Separatist,
+     * New England); Baptist; Church of England / Anglican unless also nonconformist or ejected. A note naming
+     * none (Sibbes, Brooks, Watson) counts for Presbyterian and Congregational, the churches that came out
+     * of English Puritanism.
+     */
+    private const PURITAN_NOTE = [
+        'Presbyterian' => '/\bPresbyterian/i',
+        'Congregational' => '/\b(Congregational|Independent|Separatist|New England|Massachusetts|Connecticut)/i',
+        'Baptist' => '/\bBaptists?\b/i',
+    ];
+
+    /**
+     * The traditions (of TRADITIONS) a writer counts for, from the authors table's tradition and note.
+     * @return list<string>
+     */
+    public static function writerTraditions(string $name, string $tradition, string $note): array
+    {
+        if (array_key_exists($name, self::WRITER_EXCEPTIONS)) {
+            return self::WRITER_EXCEPTIONS[$name];
+        }
+        if ($tradition !== 'Puritan') {
+            return self::WRITER_TRADITIONS[$tradition] ?? [];
+        }
+        $out = [];
+        foreach (self::PURITAN_NOTE as $t => $re) {
+            if (preg_match($re, $note) === 1) {
+                $out[] = $t;
+            }
+        }
+        if ($out === [] && preg_match('/\b(Church of England|Anglican)\b/i', $note) === 1
+            && preg_match('/\b(nonconformi|ejected)/i', $note) !== 1) {
+            $out[] = 'Anglican';
+        }
+        return $out !== [] ? $out : ['Presbyterian', 'Congregational'];
+    }
+
     /** Kinds of document that are a body's own records (the rest: histories and other writings filed with them). */
     public const OFFICIAL_KINDS = ['constitution', 'discipline', 'canons', 'digest', 'minutes', 'journal', 'report',
         'confession', 'catechism', 'liturgy', 'manual', 'church_order', 'acts', 'procedure', 'study_report'];
@@ -120,7 +177,7 @@ final class Churches
             if ($names !== []) {
                 return ['bodies' => array_fill_keys($names, [[null, null]]), 'own' => [],
                         'notes' => ['Denomination "' . $echo . '": the records of all ' . count($names) . ' '
-                            . $tradition . ' bodies in the library (the tradition filter does the same).']];
+                            . $tradition . ' bodies in the library (the tradition filter also takes writers of the tradition).']];
             }
         }
 
@@ -303,6 +360,33 @@ final class Churches
         }
         if ($ids !== []) {
             $notes[] = $present === 0 ? self::HISTORICAL_RULE : ($present === count($ids) ? self::PRESENT_RULE : self::MIXED_RULE);
+        }
+        if ($tradition !== null && $denomination === null) {
+            // The tradition alone also takes the works of its writers (DESIGN.md section 11); a denomination
+            // keeps to the records of the bodies it names.
+            $writers = [];
+            $added = 0;
+            $traditions = $store->authorTraditions();
+            $of = [];
+            foreach ($works as $id => $w) {
+                if (isset($ids[$id]) || isset($records[$id])) {
+                    continue;
+                }
+                $name = (string) $w['author'];
+                if (!isset($of[$name])) {
+                    $a = $traditions[$name] ?? null;
+                    $of[$name] = $a !== null && in_array($tradition, self::writerTraditions($name, $a['tradition'], $a['note']), true);
+                }
+                if ($of[$name]) {
+                    $ids[$id] = true;
+                    $writers[$name] = true;
+                    $added++;
+                }
+            }
+            $notes[] = 'Tradition ' . $tradition . ': ' . ($added > 0 ? 'with the church records, the works of ' . count($writers)
+                . ' writer' . (count($writers) === 1 ? '' : 's') . ' of the tradition (' . $added . ' work' . ($added === 1 ? '' : 's')
+                . ', by the tradition the library gives each writer; writers it gives none are not included).'
+                : 'the library lists no writers of this tradition, so only church records.');
         }
         return ['ids' => $ids, 'notes' => $notes, 'own' => $own, 'own_body' => $ownBody];
     }
