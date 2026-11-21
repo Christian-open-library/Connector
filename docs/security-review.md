@@ -16,6 +16,14 @@ Anthropic's AI; none was an outside audit.*
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
 
+## 21 November 2026: the nightly build and a books copy left on a branch
+
+The nightly build only builds the reviewed main version of the books. On 21 November it built nothing, because a
+working session had left the server's copy of the books on its own branch. Now a copy left on another branch with
+nothing unsaved is switched back to main before the build, and main is brought up to date as before. The branch
+keeps its own changes, and the build still sees only main. A copy with unsaved or new files still stops the
+build. Tests cover each case (`indexer/tests/test_ready_main.py`).
+
 ## 20 November 2026, evening: counting searches that found nothing
 
 The connector's log line for each tool call now also says what kind of answer it gave: a match, "no close
