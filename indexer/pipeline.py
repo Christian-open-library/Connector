@@ -225,6 +225,31 @@ def head(repo: Path) -> str:
                           text=True, check=True).stdout.strip()
 
 
+def ready_main(repo: Path) -> None:
+    """Put a books clone on origin/main for the build, or stop the build (THREAT-MODEL B4).
+
+    Uncommitted or untracked files stop it (someone's unsaved work). A clean clone left on another branch
+    (a session that forgot to switch back; the 2026-11-21 nightly built nothing because of one) is switched
+    back to main: that branch keeps its commits, so nothing is lost. Then main is pulled fast-forward only.
+    """
+    def git(*a):
+        return subprocess.run(['git', '-C', str(repo), *a], capture_output=True, text=True).stdout.strip()
+    if git('status', '--porcelain'):
+        raise SystemExit(f'{repo} has uncommitted or untracked files; nothing was built')
+    branch = git('rev-parse', '--abbrev-ref', 'HEAD')
+    if branch != 'main':
+        sw = subprocess.run(['git', '-C', str(repo), 'switch', '-q', 'main'], capture_output=True, text=True)
+        if sw.returncode != 0:
+            raise SystemExit(f'{repo} is on {branch} and could not switch to main ({sw.stderr.strip()[:200]}); '
+                             'nothing was built')
+        print(f'{repo} was on {branch} with nothing uncommitted; switched back to main')
+    if git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}') != 'origin/main':
+        raise SystemExit(f'{repo} main does not track origin/main; nothing was built')
+    subprocess.run(['git', '-C', str(repo), 'pull', '--ff-only', '-q', 'origin', 'main'], check=True)
+    if git('rev-parse', 'HEAD') != git('rev-parse', 'origin/main'):
+        raise SystemExit(f'{repo} HEAD is not origin/main after the pull; nothing was built')
+
+
 def nightly(max_dollars: float):
     # Who may sign in: refreshed every night, even when the books didn't change. A failure here is
     # reported but doesn't stop the rebuild (yesterday's list stays on the server).
@@ -240,19 +265,10 @@ def nightly(max_dollars: float):
     if su.returncode == 0 and su.stdout.strip():
         print(su.stdout.strip().splitlines()[0][:200])
     # Build only reviewed main (THREAT-MODEL B4): the clone must be on main, tracking origin/main, with
-    # nothing uncommitted or untracked, or nothing is built.
-    # The same for the licensed shelf (Matt's private repo).
+    # nothing uncommitted or untracked, or nothing is built. The same for the licensed shelf (Matt's private repo).
     licensed = licensed_root(required=True)
     for repo in (REPO, licensed):
-        def git(*a):
-            return subprocess.run(['git', '-C', str(repo), *a], capture_output=True, text=True).stdout.strip()
-        if (git('rev-parse', '--abbrev-ref', 'HEAD') != 'main'
-                or git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}') != 'origin/main'
-                or git('status', '--porcelain')):
-            raise SystemExit(f'{repo} is not a clean main tracking origin/main; nothing was built')
-        subprocess.run(['git', '-C', str(repo), 'pull', '--ff-only', '-q', 'origin', 'main'], check=True)
-        if git('rev-parse', 'HEAD') != git('rev-parse', 'origin/main'):
-            raise SystemExit(f'{repo} HEAD is not origin/main after the pull; nothing was built')
+        ready_main(repo)
     now, now_licensed = head(REPO), head(licensed)
     last = json.loads(DEPLOYED.read_text()) if DEPLOYED.exists() else {}
     # A held-back work whose hits Matt has allowed, or that he has released, rejoins the library tonight,
