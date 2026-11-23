@@ -459,6 +459,21 @@ function test_log_outcome_reads_only_the_answer_header(): void
     assert_same('ok', \ColLibrary\Mcp::outcome(['content' => [], 'isError' => false]));
 }
 
+function test_log_filters_names_settings_never_values(): void
+{
+    $f = fn (array $a) => \ColLibrary\Mcp::filtersUsed($a);
+    assert_same('', $f(['query' => 'grace', 'limit' => 8]));
+    assert_same('', $f(['query' => 'grace', 'mode' => 'best', 'author' => '']));
+    assert_same('author,exact', $f(['query' => 'secret words', 'author' => 'Owen', 'mode' => 'exact']));
+    assert_same('work_id,denomination,years', $f(['denomination' => 'PCA', 'year_to' => 1900, 'work_id' => 12]));
+    assert_same('collection,tradition,years', $f(['tradition' => 'Puritan', 'collection' => 'EEBO', 'year_from' => 1600]));
+    $all = $f(['query' => 'zzq', 'author' => 'Zzauthor', 'denomination' => 'Zzchurch', 'collection' => 'Zzcoll',
+               'tradition' => 'Zztrad', 'work_id' => 987654, 'year_from' => 1555, 'mode' => 'exact']);
+    foreach (['zz', 'Zz', '987654', '1555'] as $value) {
+        assert_not_contains($value, $all);
+    }
+}
+
 // ------------------------------------------------------------------------------------------------
 // RateLimit
 

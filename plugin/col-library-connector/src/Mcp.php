@@ -499,6 +499,9 @@ final class Mcp
         if (!isset($this->toolsByName()[$name])) {
             return [null, [self::INVALID_PARAMS, 'Unknown tool: ' . self::clip($name, 64)]];
         }
+        if (in_array($name, self::FILTER_TOOLS, true)) {
+            $this->trace['filters'] = self::filtersUsed($args);
+        }
         if ($ctx->deadline - microtime(true) < self::MIN_SECONDS_LEFT) {
             // Only reachable inside a long batch: all calls of one HTTP request share its deadline.
             $this->trace['out_of_time'] = true;
@@ -534,6 +537,31 @@ final class Mcp
         $this->trace['is_error'] = $result['isError'];
         $this->trace['outcome'] = self::outcome($result);
         return [$result, null];
+    }
+
+    /** Tools whose log line says which narrowing settings were used (Mcp::filtersUsed). */
+    private const FILTER_TOOLS = ['search_library', 'find_works', 'find_scripture_citations', 'check_quote'];
+
+    /**
+     * Which narrowing settings a tool call used, by name only, never their values, for the weekly counts of
+     * misses by setting (library-usage by_filter): a comma list in fixed order of author, work_id, collection,
+     * denomination, tradition, years (year_from or year_to) and exact (mode "exact"); '' when none was used.
+     */
+    public static function filtersUsed(array $args): string
+    {
+        $used = [];
+        foreach (['author', 'work_id', 'collection', 'denomination', 'tradition'] as $k) {
+            if (isset($args[$k]) && $args[$k] !== '' && $args[$k] !== []) {
+                $used[] = $k;
+            }
+        }
+        if (isset($args['year_from']) || isset($args['year_to'])) {
+            $used[] = 'years';
+        }
+        if (($args['mode'] ?? null) === 'exact') {
+            $used[] = 'exact';
+        }
+        return implode(',', $used);
     }
 
     /**

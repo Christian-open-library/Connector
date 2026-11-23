@@ -1,6 +1,6 @@
 # Security reviews
 
-*Newest first: 22 November 2026 (password sign-in and a 12-month log limit); 20 November 2026, later (the tradition filter and Bible-verse order); 20 November 2026 (search fixes after a round of testing); 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
+*Newest first: 23 November 2026 (which search settings missed); 22 November 2026 (password sign-in and a 12-month log limit); 20 November 2026, later (the tradition filter and Bible-verse order); 20 November 2026 (search fixes after a round of testing); 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
 website; everything changed since 10 November)
 and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
@@ -15,6 +15,24 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 23 November 2026: which search settings missed
+
+The log line of a search, book lookup, verse lookup or quote check now names the settings it used: author, one
+book, collection, church, tradition, years or exact phrase. It never says which author or church. The server's
+private usage report adds these up for the week, so the weekly count of misses can show whether they came from
+searches for one author or church (often a book the library lacks) or from searches with no setting (more likely
+a weak search). Only the totals leave the server. The privacy page says so.
+
+Question checked: does this record anything about what people search for? No.
+- The log gets one of seven fixed setting names, or none. A setting's value is never added (`tests/php/http_test.php`,
+  `test_log_filters_names_settings_never_values`).
+- The report keeps only those seven names, so an odd log line can't slip other text into it
+  (`indexer/tests/test_office_fixes.py`).
+- Nothing changes for sign-in, the daily limits or the documents used by permission.
+
+A review (Claude) read the change before release. It found no privacy issue and no fault. It noted one unclear
+label in the weekly summary, fixed before release.
 
 ## 22 November 2026: password sign-in and a 12-month log limit
 
