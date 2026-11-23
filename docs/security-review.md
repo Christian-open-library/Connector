@@ -1,6 +1,6 @@
 # Security reviews
 
-*Newest first: 20 November 2026, later (the tradition filter and Bible-verse order); 20 November 2026 (search fixes after a round of testing); 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
+*Newest first: 22 November 2026 (password sign-in and a 12-month log limit); 20 November 2026, later (the tradition filter and Bible-verse order); 20 November 2026 (search fixes after a round of testing); 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
 website; everything changed since 10 November)
 and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
@@ -15,6 +15,26 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 22 November 2026: password sign-in and a 12-month log limit
+
+To list the library in ChatGPT's app directory, OpenAI's reviewers need a sign-in with no emailed code. So the
+sign-in page (WorkOS) now offers a password as well as the email code, Google and GitHub. WorkOS only lets one
+password setting apply to everyone, so anyone can now set a password. One reviewer account was made for
+OpenAI. Its password is kept off GitHub, in a private file on the library's own computer.
+
+Questions checked:
+- Does a password make an account easier to take over? WorkOS holds the passwords, scrambled. It refuses weak
+  ones and ones found in known data breaches. Every new account still has to confirm its email address first.
+  Cloudflare's human check comes before sign-in. The connector never sees a password.
+- What can someone do with a stolen login? The same as its owner: read the library within one person's daily
+  limits. Nothing in the library can be changed through it.
+- The reviewer account: it is never blocked as a second account or paused for heavy reading by itself, so a
+  review can't be cut off halfway. Its daily limits are the same as everyone's, and it can still be blocked by hand.
+
+The connector's request log (no email addresses and no search words) is now deleted after 12 months. When a
+month's file starts, files more than 11 months older are removed. Nothing else in the folder is touched. Test:
+`tests/php/http_test.php` (`test_log_keeps_twelve_months`). The privacy page says so.
 
 ## 21 November 2026: the nightly build and a books copy left on a branch
 

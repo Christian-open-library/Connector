@@ -373,6 +373,28 @@ function test_log_redacts_secrets_and_queries(): void
     assert_same('error', json_decode($lines[2], true)['level']);
 }
 
+function test_log_keeps_twelve_months(): void
+{
+    $dir = col_tmpdir('log');
+    foreach (['2025-11', '2025-12', '2026-01', '2026-10', '2026-11'] as $m) {
+        file_put_contents("$dir/log-$m.jsonl", "{}\n");
+    }
+    file_put_contents("$dir/other.txt", 'x');
+    Log::prune($dir, '2026-11');
+    $left = array_map('basename', glob("$dir/*"));
+    sort($left);
+    assert_same(['log-2025-12.jsonl', 'log-2026-01.jsonl', 'log-2026-10.jsonl', 'log-2026-11.jsonl', 'other.txt'], $left);
+    Log::prune($dir, '2027-01');
+    $left = array_map('basename', glob("$dir/*"));
+    sort($left);
+    assert_same(['log-2026-10.jsonl', 'log-2026-11.jsonl', 'other.txt'], $left);
+    // A new month's first line prunes by itself.
+    @unlink("$dir/log-" . gmdate('Y-m') . '.jsonl');
+    file_put_contents("$dir/log-2000-01.jsonl", "{}\n");
+    (new Log('info', $dir, false, []))->info('x');
+    assert_false(file_exists("$dir/log-2000-01.jsonl"), 'old file removed when the month starts');
+}
+
 function test_log_queries_when_allowed_and_levels(): void
 {
     $dir = col_tmpdir('log');

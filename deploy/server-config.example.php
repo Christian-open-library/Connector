@@ -81,7 +81,8 @@ return [
 
     // Request log: <state_dir>/log-YYYY-MM.jsonl. 'off' (default), 'info' (one line per request)
     // or 'debug' (also tool arguments, if log_queries is true). Keys are never logged. Errors are
-    // always recorded: in this log when it is on, else in PHP's error log.
+    // always recorded: in this log when it is on, else in PHP's error log. Files older than 12 months
+    // are deleted when a new month's file starts (Log::prune; the privacy page promises it).
     'log_level'   => 'off',
     // Log the text of searches and other tool arguments (privacy: off by default).
     'log_queries' => false,

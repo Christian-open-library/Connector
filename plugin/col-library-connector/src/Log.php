@@ -4,7 +4,8 @@
  * Off by default (log_level 'off'). Never logs the URL key or the Voyage key: both are replaced
  * by "[redacted]" in every line. Query text is logged only when log_queries is true; otherwise
  * fields named in QUERY_FIELDS are replaced by "[omitted]". Logging never breaks a request: write
- * errors are ignored.
+ * errors are ignored. Monthly files older than KEEP_MONTHS are deleted when a new month's file starts
+ * (the privacy page promises the log is deleted after 12 months).
  */
 
 namespace ColLibrary;
@@ -20,6 +21,8 @@ final class Log
     private const MAX_FILE_BYTES = 50_000_000;   // a month's log stops growing beyond this
     /** Info and debug lines stop here, so a flood of them (anyone can cause 401s) never crowds out errors. */
     private const MAX_INFO_BYTES = 40_000_000;
+    /** Monthly files kept: the current month and the 11 before it. */
+    public const KEEP_MONTHS = 12;
 
     /** @param list<string> $secrets values to redact from every line */
     public function __construct(
@@ -109,6 +112,22 @@ final class Log
         }
         if (@file_put_contents($file, $line . "\n", FILE_APPEND | LOCK_EX) !== false && $size === false) {
             @chmod($file, 0600);   // new file: may hold query text, so owner-only
+            self::prune($dir, gmdate('Y-m'));   // a new month: drop the files past the limit
+        }
+    }
+
+    /** Delete log-YYYY-MM.jsonl files more than KEEP_MONTHS - 1 months before $month (YYYY-MM). */
+    public static function prune(string $dir, string $month): void
+    {
+        [$y, $m] = array_map('intval', explode('-', $month));
+        $now = $y * 12 + $m - 1;
+        foreach (glob($dir . '/log-[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl') ?: [] as $f) {
+            if (preg_match('#/log-(\d{4})-(\d{2})\.jsonl$#', $f, $x) !== 1) {
+                continue;
+            }
+            if ($now - ((int) $x[1] * 12 + (int) $x[2] - 1) >= self::KEEP_MONTHS) {
+                @unlink($f);
+            }
         }
     }
 
