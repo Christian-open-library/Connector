@@ -22,8 +22,9 @@ When one account makes far more requests than study needs, Matt gets an alert. U
 the library's computer with a password to see how that account used the library. Now the computer can list it
 by itself, for those heavy accounts only and for the last week: when each one called, which tools it used, and
 what the answers said (found, not found, or refused by a limit). It never includes what was searched or read.
-The alert then says whether the account looks like a person or a program. An account whose calls come close
-together and keep up, as a program's do, is paused by itself, and Matt is told at once. A paused account sees a
+The alert then says whether the account looks like a person or a program. Fast use alone is fine: AI research
+tools are fast. An account is paused by itself only when it is fast, mostly lists books and opens passages, and
+keeps running into the limits. That is what copying looks like. Matt is told at once. A paused account sees a
 message asking it to write in, and Matt can let it back in. An account he has let back in is never paused again
 by itself.
 
