@@ -11,6 +11,8 @@
 #   deploy/deploy-office.sh smoke | status | rollback
 #   deploy/deploy-office.sh errors               error lines from the last 72 h (needs deploy/office/log-errors.sh once)
 #   deploy/deploy-office.sh usage                7 days of usage numbers, JSON (needs deploy/office/usage-report-2026-11-12.sh once)
+#   deploy/deploy-office.sh accounts             7 days of call times and tools for the heaviest accounts, JSON (no searches;
+#                                                needs deploy/office/account-patterns-2026-11-24.sh once)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # user@host of the deploy account (on the maintainer's machine: ~/.config/library-connector/office-host)
@@ -99,8 +101,8 @@ case "${1:-}" in
       | timeout --kill-after=30s 12m "${SSH[@]}" "$HOST" members ;;
   smoke)
     python3 -I deploy/smoke.py "$(url_file)" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("release",""))' "$DEPLOYED" 2>/dev/null || true)" ;;
-  status|rollback|errors|usage)
+  status|rollback|errors|usage|accounts)
     "${SSH[@]}" "$HOST" "$1" ;;
   *)
-    sed -n '2,12p' "$0"; exit 1 ;;
+    sed -n '2,14p' "$0"; exit 1 ;;
 esac

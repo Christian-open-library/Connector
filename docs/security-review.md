@@ -1,6 +1,6 @@
 # Security reviews
 
-*Newest first: 23 November 2026 (which search settings missed); 22 November 2026 (password sign-in and a 12-month log limit); 20 November 2026, later (the tradition filter and Bible-verse order); 20 November 2026 (search fixes after a round of testing); 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
+*Newest first: 24 November 2026 (a closer look at heavy accounts); 23 November 2026 (which search settings missed); 22 November 2026 (password sign-in and a 12-month log limit); 20 November 2026, later (the tradition filter and Bible-verse order); 20 November 2026 (search fixes after a round of testing); 19 November 2026, later (a church's own documents first); 19 November 2026 (a daily reading limit); 16 November 2026 (the Browse page's search in the books, and before it the library search on the website); 14 November 2026 (the quotation checker on the
 website; everything changed since 10 November)
 and 10 November 2026 (the whole connector). An earlier review of the first version ran on 8–9 November. All were carried out with Claude,
 Anthropic's AI; none was an outside audit.*
@@ -15,6 +15,29 @@ Anthropic's AI; none was an outside audit.*
   bodies that own them (limited per search and per person). It keeps no copy of your conversations or
   documents and doesn't log what you search for. Sign-in accounts are held by WorkOS. Details:
   [what happens to your question](https://christianopenlibrary.org/privacy.html).
+
+## 24 November 2026: a closer look at heavy accounts
+
+When one account makes far more requests than study needs, Matt gets an alert. Until now he had to sign in to
+the library's computer with a password to see how that account used the library. Now the computer can list it
+by itself, for those heavy accounts only and for the last week: when each one called, which tools it used, and
+what the answers said (found, not found, or refused by a limit). It never includes what was searched or read.
+The alert then says whether the account looks like a person or a program. An account whose calls come close
+together and keep up, as a program's do, is paused by itself, and Matt is told at once. A paused account sees a
+message asking it to write in, and Matt can let it back in. An account he has let back in is never paused again
+by itself.
+
+Questions checked:
+- Does this record anything new? No. It reads the log lines the connector already keeps (see the privacy
+  page) and adds them up.
+- Can it be used to look at any account someone chooses? No. It takes no input. It lists only accounts over the
+  heavy-use line.
+- Can a caller slip text into the report? The log can hold a tool name a caller made up. The report prints only
+  the library's own tool names and answer types, and only IDs of the usual form. A test feeds it a made-up name.
+- It runs with the same narrow rights as the existing usage report: read-only, as the connector's own user,
+  through one fixed command that takes nothing else.
+
+The privacy page now says that heavy accounts' log lines are looked at.
 
 ## 23 November 2026: which search settings missed
 
