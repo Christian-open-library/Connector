@@ -84,7 +84,7 @@ final class Mcp
     /** initialize / server/discover instructions (claude.ai currently does not pass them to the model). */
     public const INSTRUCTIONS = 'The Christian Open Library: over 7,600 public-domain works, mostly Christian, from the '
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
-        . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
+        . 'Church Fathers in Schaff\'s translation and in Greek, Latin and Syriac editions, Spurgeon, Edwards, Owen, Baxter, creeds and '
         . 'confessions, the historic records of more than 80 denominations (constitutions, books of order and discipline, digests, and General Assembly, convention and conference minutes, before 1931), verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
         . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more), '
         . 'with Bible translations and older Bible and theological dictionaries. Search with several phrasings for '

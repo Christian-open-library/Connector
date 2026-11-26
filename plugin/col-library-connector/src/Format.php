@@ -28,6 +28,7 @@ final class Format
         'evans-tcp' => 'Evans-TCP (early American imprints)',
         'ecco-tcp' => 'ECCO-TCP (1700s editions)',
         'ccel-schaff' => 'Church Fathers (Schaff, CCEL)',
+        'fathers-other' => 'Church Fathers, other editions (mostly Greek, Latin and Syriac)',
         'ccel' => 'CCEL',
         'internet-archive' => 'Internet Archive (OCR)',
         'project-gutenberg' => 'Project Gutenberg',

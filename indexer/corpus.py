@@ -55,6 +55,7 @@ COLLECTION_LABELS = {
     'evans-tcp': 'Evans-TCP (early American imprints)',
     'ecco-tcp': 'ECCO-TCP (1700s editions)',
     'ccel-schaff': 'Church Fathers (Schaff, CCEL)',
+    'fathers-other': 'Church Fathers, other editions (mostly Greek, Latin and Syriac)',
     'ccel': 'CCEL',
     'internet-archive': 'Internet Archive (OCR)',
     'project-gutenberg': 'Project Gutenberg',
@@ -357,6 +358,15 @@ def iter_works(repo: Path, ids: dict[str, int], rows: list[dict] | None = None) 
             warn(f'work skipped ({type(e).__name__}: {str(e)[:200]!r}): {key!r}')
 
 
+def _folder_collection(top: str, source: str) -> str:
+    """The collection of a work whose front matter names none, from its top folder. ChurchFathers holds
+    Schaff's English volumes (from CCEL) and Greek, Latin and Syriac editions from other sources: only the
+    first are 'ccel-schaff', so a filter promised as "the Fathers in Schaff's translation" stays English."""
+    if top == 'ChurchFathers' and 'ccel.org/ccel/schaff/' not in source:
+        return 'fathers-other'
+    return COLLECTION_BY_FOLDER.get(top, top.lower())
+
+
 def _work(repo: Path, row: dict, key: str, work_id: int) -> Work:
     meta, _ = split_frontmatter(read_repo_text(repo, key))
     top = key.split('/', 1)[0]
@@ -372,7 +382,7 @@ def _work(repo: Path, row: dict, key: str, work_id: int) -> Work:
         full_title=r('Full title') or m('full_title') or r('Title'),
         year=_year(row.get('Year')) or _year(meta.get('date')),
         type=r('Type') or m('type') or 'book',
-        collection=m('collection') or COLLECTION_BY_FOLDER.get(top, top.lower()),
+        collection=m('collection') or _folder_collection(top, r('Source') or m('source')),
         license=r('License') or m('license'),
         source_url=r('Source') or m('source'),
         tcp_id=m('tcp_id'),

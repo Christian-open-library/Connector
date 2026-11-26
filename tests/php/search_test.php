@@ -517,6 +517,7 @@ function test_a_group_of_writers_gets_a_hint(): void
     $s = search();
     assert_contains('For what the Puritans themselves wrote', (string) Search::groupHint($s->queryTokens('What did the Puritans say about assurance?')));
     assert_contains('Church Fathers', (string) Search::groupHint($s->queryTokens('early church fathers on baptism')));
+    assert_contains('Schaff\'s English translation; "fathers-other" for Greek, Latin and Syriac', (string) Search::groupHint($s->queryTokens('early church fathers on baptism')));
     assert_contains('Reformers', (string) Search::groupHint($s->queryTokens('the Reformers on images')));
     assert_same(null, Search::groupHint($s->queryTokens('the fathers of the faithful')), 'fathers alone is not the Fathers');
     assert_same(null, Search::groupHint($s->queryTokens('assurance of salvation')));

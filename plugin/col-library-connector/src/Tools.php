@@ -59,7 +59,7 @@ final class Tools
             'collection' => ['type' => 'string', 'enum' => $collections,
                 'description' => 'Only one collection: eebo-tcp (original 1500s-1700s editions), evans-tcp (early '
                     . 'American imprints), ecco-tcp (1700s editions), ccel-schaff (Church Fathers in Schaff\'s '
-                    . 'translation), ccel (Christian Classics Ethereal Library), internet-archive (OCR scans), '
+                    . 'English translation), fathers-other (Church Fathers in other editions, mostly Greek, Latin and Syriac), ccel (Christian Classics Ethereal Library), internet-archive (OCR scans), '
                     . 'project-gutenberg, standard-ebooks, docsouth (Documenting the American South), creeds-json '
                     . '(creeds and confessions), contributed, licensed (present-day church documents used by permission).'],
             'denomination' => ['type' => 'string', 'maxLength' => Churches::NAME_MAX,
@@ -88,7 +88,7 @@ final class Tools
             'title' => 'Search the Christian Open Library',
             'description' => 'Search the Christian Open Library: over 7,600 public-domain works, mostly Christian, from the '
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
-        . 'Church Fathers in Schaff\'s translation, Spurgeon, Edwards, Owen, Baxter, creeds and '
+        . 'Church Fathers in Schaff\'s translation and in Greek, Latin and Syriac editions, Spurgeon, Edwards, Owen, Baxter, creeds and '
         . 'confessions, the historic records of more than 80 denominations (constitutions, books of order and discipline, digests, and General Assembly, convention and conference minutes, before 1931), verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
         . 'sermons by text, Greek and Hebrew study helps, the Princeton Review, Christian poetry and fiction, classic philosophy, and more). Finds passages by meaning and by keywords, then re-ranks them. Most denominational documents are historical editions (before 1931): give the edition and year, and say that the church body\'s current rules may differ and that it may since have merged or divided. Some present-day church documents are included by permission of their owners (at present the URCNA\'s Church Order, Acts of Synod and study committee reports): their results say "Used by permission" and whether each is the current edition or an official record of a past synod; quote only what answers the question, never a whole document, credit the body, and give the "Official copy" link. When the user names their church or asks what a denomination taught or required, pass it as denomination (e.g. "PCA"): results then come only from that body\'s records and those of the bodies it descends from, each labeled "Church record", with the body\'s own present-day documents first when the library has them. Old spellings are handled '
                 . 'automatically: a search for "sin" also finds "ſinne". Returns verbatim passages, each with a ref '

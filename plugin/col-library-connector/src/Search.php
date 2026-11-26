@@ -705,7 +705,7 @@ final class Search
         }
         if ((isset($t['fathers']) && (isset($t['church']) || isset($t['early']))) || isset($t['patristic'])) {
             return 'For the Church Fathers\' own words, search the subject again with collection "ccel-schaff" (the '
-                . 'Fathers in Schaff\'s translation) or with author set to a Father (for example "Augustine", "Chrysostom", '
+                . 'Fathers in Schaff\'s English translation; "fathers-other" for Greek, Latin and Syriac editions) or with author set to a Father (for example "Augustine", "Chrysostom", '
                 . '"Athanasius").';
         }
         if (isset($t['reformers'])) {

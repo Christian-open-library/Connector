@@ -13,6 +13,18 @@ def make_work(files, key=None):
                        source_url='', tcp_id='', series='', ocr=False, files=files)
 
 
+class FolderCollection(unittest.TestCase):
+    def test_only_schaffs_volumes_are_ccel_schaff(self):
+        self.assertEqual(corpus._folder_collection('ChurchFathers', 'https://ccel.org/ccel/schaff/npnf101.vi.html'),
+                         'ccel-schaff')
+        self.assertEqual(corpus._folder_collection(
+            'ChurchFathers', 'https://github.com/OpenGreekAndLatin/csel-dev (stoa0040.stoa001.opp-lat1)'),
+            'fathers-other')
+        self.assertEqual(corpus._folder_collection('ChurchFathers', ''), 'fathers-other')
+        self.assertEqual(corpus._folder_collection('EEBO-TCP', ''), 'eebo-tcp')
+        self.assertIn('fathers-other', corpus.COLLECTION_LABELS)
+
+
 class PageLabels(unittest.TestCase):
     def test_forms(self):
         cases = {'3': '3', 'iii': 'iii', '{1}': '1', '{iii}': 'iii', '14a': '14a', 'page1': '1',
