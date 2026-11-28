@@ -82,7 +82,7 @@ final class Mcp
     public const READING_METHOD = 'library/reading';
 
     /** initialize / server/discover instructions (claude.ai currently does not pass them to the model). */
-    public const INSTRUCTIONS = 'The Christian Open Library: over 7,600 public-domain works, mostly Christian, from the '
+    public const INSTRUCTIONS = 'The Christian Open Library: over 9,200 public-domain works, mostly Christian, from the '
         . 'ancient times to the early 1900s (Puritans and Reformers in their original editions via EEBO-TCP, the '
         . 'Church Fathers in Schaff\'s translation and in Greek, Latin and Syriac editions, Spurgeon, Edwards, Owen, Baxter, creeds and '
         . 'confessions, the historic records of more than 80 denominations (constitutions, books of order and discipline, digests, and General Assembly, convention and conference minutes, before 1931), verse-by-verse commentaries such as Calvin, Matthew Henry and Keil and Delitzsch, '
